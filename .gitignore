@@ -1,2 +1,7 @@
 .env
 venv/
+__pycache__
+vibravox_subset_n5000_sr16000_len32000
+vibravox_subset_n1000_sr16000_len32000_test
+*.ipynb
+.DS_Store
