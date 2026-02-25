@@ -1,90 +1,50 @@
-import soundfile as sf
 import torch
+from util import spec_transformator
 from torch.utils.data import Dataset
-import pandas as pd
+from datasets import load_dataset
+import dill as pickle
+
 
 class VibravoxLocal(Dataset):
-    def __init__(self, parquet_path, mode='forehead'):
-        self.df = pd.read_parquet(parquet_path)
+    def __init__(self, repo, split, mode):
+        self.ds = load_dataset(repo, split=split)
         self.mode = mode
 
     def __len__(self):
-        return len(self.df)
+        return len(self.ds)
 
     def __getitem__(self, idx):
-        row = self.df.iloc[idx]
+        row = self.ds[idx]
+        hs = row['headset_path'].get_all_samples().data
 
-        hs, _ = sf.read(row["headset_path"])
         if self.mode == 'forehead':
-            bc, _ = sf.read(row["forehead_path"])
+            bc = row["forehead_path"].get_all_samples().data
         elif self.mode == 'temple':
-            bc, _ = sf.read(row["temple_path"])
+            bc = row["temple_path"].get_all_samples().data
         else:
             raise
 
-        return torch.from_numpy(hs).float(), torch.from_numpy(bc).float()
+        return hs.squeeze(), bc.squeeze()
 
-class STFTNoiseCollate:
-    def __init__(
-        self,
-        snr_min: float,
-        snr_max: float,
-        n_fft: int = 512,
-        hop_length: int = 128,
-        win_length: int = 512,
-        center: bool = True,
-        pad_mode: str = "reflect",
-        onesided: bool = True,
-    ):
-        self.snr_min = float(snr_min)
-        self.snr_max = float(snr_max)
-        self.n_fft = int(n_fft)
-        self.hop_length = int(hop_length)
-        self.win_length = int(win_length)
-        self.center = bool(center)
-        self.pad_mode = pad_mode
-        self.onesided = bool(onesided)
-        # Keep as plain tensor attribute; it will be pickled and recreated in workers.
-        self.window = torch.hann_window(self.win_length)
 
-    def __call__(self, batch):
+def make_collate_fn(snr_range, spec_config={}):
+
+    s_tr = spec_transformator(spec_config=spec_config)
+    def collate(batch):
         # batch: list of (ac_clean [32000], bc [32000])
         ac_list, bc_list = zip(*batch)
         ac_clean = torch.stack(ac_list, dim=0)  # [B, 32000]
         bc = torch.stack(bc_list, dim=0)        # [B, 32000]
 
-        X = torch.stft(
-            ac_clean,
-            n_fft=self.n_fft,
-            hop_length=self.hop_length,
-            win_length=self.win_length,
-            window=self.window.to(device=ac_clean.device, dtype=ac_clean.dtype),
-            center=self.center,
-            pad_mode=self.pad_mode,
-            normalized=False,
-            onesided=self.onesided,
-            return_complex=True,
-        )  # [B, F, T] complex
-
-        X_bc = torch.stft(
-            bc,
-            n_fft=self.n_fft,
-            hop_length=self.hop_length,
-            win_length=self.win_length,
-            window=self.window.to(device=bc.device, dtype=bc.dtype),
-            center=self.center,
-            pad_mode=self.pad_mode,
-            normalized=False,
-            onesided=self.onesided,
-            return_complex=True,
-        )  # [B, F, T] complex
+        X = s_tr.stft(ac_clean)
+        X_bc = s_tr.stft(bc)
 
         # Complex Gaussian noise
         N = torch.complex(torch.randn_like(X.real), torch.randn_like(X.real))
 
         # Random SNR per sample
         B = ac_clean.shape[0]
-        snr_db = torch.empty(B, device=X.device).uniform_(self.snr_min, self.snr_max)
+        snr_db = torch.empty(B, device=X.device).uniform_(snr_range[0], snr_range[1])
         snr_lin = 10 ** (snr_db / 10.0)
 
         eps = 1e-12
@@ -98,29 +58,25 @@ class STFTNoiseCollate:
         ac_clean_ri = torch.view_as_real(X).contiguous()
         bc_ri = torch.view_as_real(X_bc).contiguous()
         ac_noisy_ri = torch.view_as_real(Y).contiguous()
-        # ac_clean_ri = torch.view_as_real(X).permute(0, 3, 1, 2).contiguous()
-        # bc_ri = torch.view_as_real(X_bc).permute(0, 3, 1, 2).contiguous()
-        # ac_noisy_ri = torch.view_as_real(Y).permute(0, 3, 1, 2).contiguous()
         
-
         return ac_clean_ri, bc_ri, ac_noisy_ri, snr_db
     
+    return collate
+
+
+
 
 def create_dataloader(
-        path,
-        batch_size,
-        num_workers=4,
-        snr_min=0,
-        snr_max=20,
-        n_fft: int = 512,
-        hop_length: int = 128,
-        win_length: int = 512,
-        center: bool = True,
-        pad_mode: str = "reflect",
-        onesided: bool = True
+        repo='verbreb/vibravox_16k_2s_subset',
+        split='train',
+        mode='forehead',
+        batch_size=8,
+        num_workers=0,
+        snr_range=(0,20),
+        spec_config={}
 ):
-    dataset = VibravoxLocal(path)
-    collate = STFTNoiseCollate(snr_min=0, snr_max=20)
+    dataset = VibravoxLocal(repo, split, mode)
+    collate = make_collate_fn(snr_range=snr_range, spec_config=spec_config)
     loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
@@ -129,3 +85,18 @@ def create_dataloader(
         pin_memory=False,   # pinning mainly helps CUDA; can ignore on Mac
     )
     return loader
+
+
+if __name__ == '__main__':
+    train_dl = create_dataloader(split='train')
+    test_dl = create_dataloader(split='test')
+
+    print(f'bsz: {train_dl.batch_size}, n_wrk: {train_dl.num_workers}')
+    print(f'Train_len: {len(train_dl)}, test_len: {len(test_dl)}')
+
+    ac_clean_ri, bc_ri, ac_noisy_ri, snr_db = next(iter(train_dl))
+
+    print(f'{ac_clean_ri.shape = }')
+    print(f'{bc_ri.shape = }')
+    print(f'{ac_noisy_ri.shape = }')
+    print(f'{snr_db.shape = }')
