@@ -1,71 +1,61 @@
-"""
-Loss functions for GTCRN-BC training.
-
-HybridLoss combines:
-1. Compressed complex spectral loss (real + imag with power-law compression)
-2. Compressed magnitude loss  
-3. SI-SNR in time domain
-
-This is the same loss from the original GTCRN training, unchanged.
-It works well for BC-aided enhancement because:
-- The spectral losses handle frequency-domain reconstruction
-- SI-SNR ensures time-domain signal quality
-- Power-law compression (0.3) emphasizes quiet components
-"""
 import torch
 import torch.nn as nn
-
+import torch.nn.functional as F
 
 class HybridLoss(nn.Module):
-    """
-    Multi-objective loss for speech enhancement.
-    
-    Components:
-        - Compressed complex loss: MSE on power-compressed real/imag parts
-        - Compressed magnitude loss: MSE on mag^0.3
-        - SI-SNR: Scale-invariant signal-to-noise ratio
-    
-    Input:
-        pred_stft: (B, F, T, 2) — predicted STFT [real, imag]
-        true_stft: (B, F, T, 2) — target clean STFT [real, imag]
-    """
-    def __init__(self, nfft=512, hop=256, compress_exp=0.3):
+    def __init__(self,
+        nfft=512,
+        hop_length=128,
+        center=True,
+        onesided=True,
+        length=32000,
+        compress_exp=0.3,
+    ):
         super().__init__()
         self.nfft = nfft
-        self.hop = hop
+        self.hop = hop_length
+        self.center = center
+        self.onesided = onesided
+        self.length = length
         self.compress_exp = compress_exp
 
+        # Match the window you used in torch.stft
+        self.register_buffer("window", torch.hann_window(nfft))
+
     def forward(self, pred_stft, true_stft):
-        device = pred_stft.device
+        pred_real, pred_imag = pred_stft[..., 0], pred_stft[..., 1]
+        true_real, true_imag = true_stft[..., 0], true_stft[..., 1]
 
-        pred_real = pred_stft[:, :, :, 0]
-        pred_imag = pred_stft[:, :, :, 1]
-        true_real = true_stft[:, :, :, 0]
-        true_imag = true_stft[:, :, :, 1]
+        pred_mag = torch.sqrt(pred_real**2 + pred_imag**2 + 1e-12)
+        true_mag = torch.sqrt(true_real**2 + true_imag**2 + 1e-12)
 
-        pred_mag = torch.sqrt(pred_real ** 2 + pred_imag ** 2 + 1e-12)
-        true_mag = torch.sqrt(true_real ** 2 + true_imag ** 2 + 1e-12)
-
-        # Power-law compressed complex components
-        c = 1.0 - self.compress_exp  # 0.7
+        c = 1.0 - self.compress_exp
         pred_real_c = pred_real / (pred_mag ** c)
         pred_imag_c = pred_imag / (pred_mag ** c)
         true_real_c = true_real / (true_mag ** c)
         true_imag_c = true_imag / (true_mag ** c)
 
-        real_loss = nn.functional.mse_loss(pred_real_c, true_real_c)
-        imag_loss = nn.functional.mse_loss(pred_imag_c, true_imag_c)
-        mag_loss = nn.functional.mse_loss(pred_mag ** self.compress_exp,
-                                           true_mag ** self.compress_exp)
+        real_loss = F.mse_loss(pred_real_c, true_real_c)
+        imag_loss = F.mse_loss(pred_imag_c, true_imag_c)
+        mag_loss  = F.mse_loss(pred_mag ** self.compress_exp, true_mag ** self.compress_exp)
 
-        # SI-SNR in time domain
-        window = torch.hann_window(self.nfft).pow(0.5).to(device)
-        y_pred = torch.istft(pred_real + 1j * pred_imag,
-                             self.nfft, self.hop, self.nfft, window=window)
-        y_true = torch.istft(true_real + 1j * true_imag,
-                             self.nfft, self.hop, self.nfft, window=window)
+        # ISTFT with the SAME window as STFT
+        win = self.window.to(device=pred_real.device, dtype=pred_real.dtype)
 
-        # SI-SNR calculation
+        Yp = torch.complex(pred_real, pred_imag)
+        Yt = torch.complex(true_real, true_imag)
+        y_pred = torch.istft(
+            Yp, n_fft=self.nfft, hop_length=self.hop, win_length=self.nfft,
+            window=win, center=self.center, normalized=False,
+            onesided=self.onesided, length=self.length
+        )
+        y_true = torch.istft(
+            Yt, n_fft=self.nfft, hop_length=self.hop, win_length=self.nfft,
+            window=win, center=self.center, normalized=False,
+            onesided=self.onesided, length=self.length
+        )
+
+        # SI-SNR (your formula kept)
         y_true_proj = (torch.sum(y_true * y_pred, dim=-1, keepdim=True) * y_true
                        / (torch.sum(y_true ** 2, dim=-1, keepdim=True) + 1e-8))
         sisnr = -torch.log10(

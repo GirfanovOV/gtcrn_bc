@@ -66,6 +66,19 @@ class STFTNoiseCollate:
             return_complex=True,
         )  # [B, F, T] complex
 
+        X_bc = torch.stft(
+            bc,
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            win_length=self.win_length,
+            window=self.window.to(device=bc.device, dtype=bc.dtype),
+            center=self.center,
+            pad_mode=self.pad_mode,
+            normalized=False,
+            onesided=self.onesided,
+            return_complex=True,
+        )  # [B, F, T] complex
+
         # Complex Gaussian noise
         N = torch.complex(torch.randn_like(X.real), torch.randn_like(X.real))
 
@@ -82,10 +95,15 @@ class STFTNoiseCollate:
         Y = X + N * scale[:, None, None]
 
         # 2-channel RI: [B, 2, F, T]
-        ac_clean_ri = torch.view_as_real(X).permute(0, 3, 1, 2).contiguous()
-        ac_noisy_ri = torch.view_as_real(Y).permute(0, 3, 1, 2).contiguous()
+        ac_clean_ri = torch.view_as_real(X).contiguous()
+        bc_ri = torch.view_as_real(X_bc).contiguous()
+        ac_noisy_ri = torch.view_as_real(Y).contiguous()
+        # ac_clean_ri = torch.view_as_real(X).permute(0, 3, 1, 2).contiguous()
+        # bc_ri = torch.view_as_real(X_bc).permute(0, 3, 1, 2).contiguous()
+        # ac_noisy_ri = torch.view_as_real(Y).permute(0, 3, 1, 2).contiguous()
+        
 
-        return ac_clean_ri, bc, ac_noisy_ri, snr_db
+        return ac_clean_ri, bc_ri, ac_noisy_ri, snr_db
     
 
 def create_dataloader(

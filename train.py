@@ -13,6 +13,7 @@ import time
 import torch
 import torch.nn as nn
 from pathlib import Path
+from tqdm import tqdm
 
 from gtcrn_bc import GTCRN_BC, GTCRN
 from loss import HybridLoss
@@ -51,6 +52,14 @@ DEFAULT_CONFIG = dict(
 
     # Device
     device=None,                   # auto-detect if None
+
+    # FFT
+    n_fft = 512,
+    hop_length = 128,
+    win_length = 512,
+    center = True,
+    pad_mode = "reflect",
+    onesided = True
 )
 
 
@@ -128,21 +137,35 @@ def train(config=None):
         batch_size=cfg['batch_size'],
         num_workers=cfg['num_workers'],
         snr_min=cfg['snr_min'],
-        snr_max=cfg['snr_max']
+        snr_max=cfg['snr_max'],
+        n_fft=cfg['n_fft'],
+        hop_length=cfg['hop_length'],
+        win_length=cfg['win_length'],
+        center=cfg['center'],
+        pad_mode=cfg['pad_mode'],
+        onesided=cfg['onesided']
     )
     val_loader = create_dataloader(
         path=cfg['path_test'],
         batch_size=cfg['batch_size'],
         num_workers=cfg['num_workers'],
         snr_min=cfg['snr_min'],
-        snr_max=cfg['snr_max']
+        snr_max=cfg['snr_max'],
+        n_fft=cfg['n_fft'],
+        hop_length=cfg['hop_length'],
+        win_length=cfg['win_length'],
+        center=cfg['center'],
+        pad_mode=cfg['pad_mode'],
+        onesided=cfg['onesided']
     )
     
     print(f"Train batches: {len(train_loader)}")
     # print(f"Train batches: {len(train_loader)} | Val batches: {len(val_loader)}")
 
     # ── Loss & Optimizer ───────────────────────────────────────────────
-    loss_fn = HybridLoss().to(device)
+    loss_fn = HybridLoss(
+        
+    ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg["lr"])
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=5
@@ -162,10 +185,13 @@ def train(config=None):
         n_batches = 0
         t0 = time.time()
 
-        for batch_idx, batch in enumerate(train_loader):
-            if batch_idx > 10:
-                    break
-            ac_noisy, bc, ac_clean = [x.to(device) for x in batch]
+        for batch_idx, batch in enumerate(tqdm(train_loader)):
+            ac_noisy, bc, ac_clean, _ = [x.to(device) for x in batch]
+
+            # print(ac_noisy.shape)
+            # print(bc.shape)
+            # print(ac_clean.shape)
+            # exit()
             optimizer.zero_grad()
 
             if cfg["model_type"] == "gtcrn_bc":
@@ -175,8 +201,8 @@ def train(config=None):
 
             loss = loss_fn(pred, ac_clean)
             loss.backward()
-            ll = loss.item()
-            print(f'{epoch = }, {batch_idx = }, {ll = :.2f}')
+            # ll = loss.item()
+            # print(f'{epoch = }, {batch_idx = }, {ll = :.2f}')
 
             if cfg["grad_clip"] > 0:
                 nn.utils.clip_grad_norm_(model.parameters(), cfg["grad_clip"])
