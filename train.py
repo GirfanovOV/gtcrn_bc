@@ -13,7 +13,7 @@ import time
 import torch
 import torch.nn as nn
 from pathlib import Path
-from tqdm import tqdm
+from tqdm.auto import tqdm
 import argparse
 
 from gtcrn_bc import GTCRN_BC, GTCRN
@@ -102,6 +102,20 @@ def validate(model, val_loader, loss_fn, device, model_type):
 
     return total_loss / max(n_batches, 1)
 
+def make_pbar(iterable, total=None, desc=None):
+    # Colab/TTY can be flaky; these settings are usually stable.
+    return tqdm(
+        iterable,
+        total=total,
+        desc=desc,
+        dynamic_ncols=True,
+        mininterval=0.2,
+        maxinterval=1.0,
+        smoothing=0.0,
+        ascii=True,          # more robust in terminals
+        leave=False,         # avoid accumulating bars
+    )
+
 
 def train(config=None):
     """
@@ -179,13 +193,10 @@ def train(config=None):
         n_batches = 0
         t0 = time.time()
 
-        for batch_idx, batch in enumerate(tqdm(train_loader)):
-            ac_noisy, bc, ac_clean, _ = [x.to(device) for x in batch]
+        pbar = make_pbar(train_loader, total=len(train_loader), desc=f"Epoch {epoch}/{cfg['epochs']}")
 
-            # print(ac_noisy.shape)
-            # print(bc.shape)
-            # print(ac_clean.shape)
-            # exit()
+        for batch_idx, batch in enumerate(pbar):
+            ac_noisy, bc, ac_clean, _ = [x.to(device) for x in batch]
             optimizer.zero_grad()
 
             if cfg["model_type"] == "gtcrn_bc":
@@ -204,11 +215,16 @@ def train(config=None):
             epoch_loss += loss.item()
             n_batches += 1
 
-            # Print progress every 50 batches
-            if (batch_idx + 1) % 50 == 0:
-                avg = epoch_loss / n_batches
-                print(f"  [{epoch}] batch {batch_idx + 1}/{len(train_loader)} "
-                      f"loss: {avg:.4f}")
+            # Update right-side metrics every 10 batches (and on batch 1)
+            if (n_batches % 10 == 0) or (n_batches == 1):
+                avg_epoch_loss = epoch_loss / n_batches
+                pbar.set_postfix({"avg_loss": f"{avg_epoch_loss:.4f}"}, refresh=False)
+
+            # # Print progress every 50 batches
+            # if (batch_idx + 1) % 50 == 0:
+            #     avg = epoch_loss / n_batches
+            #     print(f"  [{epoch}] batch {batch_idx + 1}/{len(train_loader)} "
+            #           f"loss: {avg:.4f}")
 
         # ── Epoch summary ──────────────────────────────────────────────
         train_loss = epoch_loss / max(n_batches, 1)
