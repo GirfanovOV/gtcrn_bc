@@ -14,10 +14,12 @@ import torch
 import torch.nn as nn
 from pathlib import Path
 from tqdm import tqdm
+import argparse
 
 from gtcrn_bc import GTCRN_BC, GTCRN
 from loss import HybridLoss
 from dataset import create_dataloader
+from pprint import pprint
 # import warnings
 # warnings.filterwarnings('ignore')
 
@@ -129,6 +131,9 @@ def train(config=None):
     model = model.to(device)
     total, trainable = count_parameters(model)
     print(f"Model: {cfg['model_type']} | Params: {total:,} total, {trainable:,} trainable")
+
+    print('Train config:')
+    pprint(cfg)
 
     # ── Data ───────────────────────────────────────────────────────────
     train_loader = create_dataloader(
@@ -247,6 +252,26 @@ def train(config=None):
 
     return model, history
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train GTCRN-BC")
+
+    parser.add_argument("--batch_size", type=int, default=None,
+                        help="Batch size")
+    parser.add_argument("--num_workers", type=int, default=None,
+                        help="Number of DataLoader workers")
+
+    return parser.parse_args()
+
 
 if __name__ == "__main__":
-    train()
+    args = parse_args()
+
+    cli_config = {}
+
+    if args.batch_size is not None:
+        cli_config["batch_size"] = args.batch_size
+
+    if args.num_workers is not None:
+        cli_config["num_workers"] = args.num_workers
+
+    train(cli_config)
