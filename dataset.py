@@ -14,8 +14,11 @@ class VibravoxLocal(Dataset):
         return len(self.ds)
 
     def __getitem__(self, idx):
-        row = self.ds[idx]
-        hs = row['headset_path'].get_all_samples().data
+        try:
+            row = self.ds[idx]
+            hs = row['headset_path'].get_all_samples().data
+        except:
+            return
 
         if self.mode == 'forehead':
             bc = row["forehead_path"].get_all_samples().data
@@ -32,6 +35,7 @@ def make_collate_fn(snr_range, spec_config={}):
     s_tr = spec_transformator(spec_config=spec_config)
     def collate(batch):
         # batch: list of (ac_clean [32000], bc [32000])
+        batch = [x for x in batch if x is not None]
         ac_list, bc_list = zip(*batch)
         ac_clean = torch.stack(ac_list, dim=0)  # [B, 32000]
         bc = torch.stack(bc_list, dim=0)        # [B, 32000]
