@@ -6,7 +6,8 @@ DEFAULT_SPEC_CONFIG = {
     'win_length': 512,
     'center': True,
     'pad_mode': 'reflect',
-    'onesided': True
+    'onesided': True,
+    'length': 32000
 }
 
 class spec_transformator():
@@ -21,6 +22,7 @@ class spec_transformator():
         self.pad_mode = cfg['pad_mode']
         self.onesided = cfg['onesided']
         self.window = torch.hann_window(self.win_length)
+        self.length = cfg['length']
     
     def stft(self, X):
         X_stft = torch.stft(
@@ -35,15 +37,16 @@ class spec_transformator():
             onesided=self.onesided,
             return_complex=True,
         )
+        # X_stft = torch.view_as_real(X_stft)
         return X_stft
 
     def istft(self, X):
         X_istft = torch.istft(
             X,
-            n_fft=self.nfft,
+            n_fft=self.n_fft,
             hop_length=self.hop_length,
             win_length=self.win_length,
-            window=self.window.to(device=X.device, dtype=X.dtype),
+            window=self.window.to(device=X.device),
             center=self.center,
             normalized=False,
             onesided=self.onesided,

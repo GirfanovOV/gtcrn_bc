@@ -27,12 +27,8 @@ DEFAULT_CONFIG = dict(
     model_type="gtcrn_bc",         # "gtcrn_bc" or "gtcrn" (AC-only baseline)
 
     # Dataset
-    path_train='vibravox_subset_n5000_sr16000_len32000/metadata.parquet',
-    path_test='vibravox_subset_n1000_sr16000_len32000_test/metadata.parquet',
-    snr_min=0,
-    snr_max=20,
-    # snr_range=(0, 20),             # dB range for Gaussian noise on AC
-    # segment_seconds=2.0,           # audio chunk length
+    repo='verbreb/vibravox_16k_2s_subset',
+    snr_range=(0, 20),             # dB range for Gaussian noise on AC
 
     # Training
     batch_size=8,
@@ -43,7 +39,7 @@ DEFAULT_CONFIG = dict(
     # Data limits (set to None for full dataset)
     max_train_samples=None,        # e.g. 2000 for quick test
     max_val_samples=None,          # e.g. 500 for quick test
-    num_workers=4,                 # 0 for Mac, 2-4 for Colab
+    num_workers=0,                 # 0 for Mac, 2-4 for Colab
 
 
     # Checkpointing
@@ -52,14 +48,15 @@ DEFAULT_CONFIG = dict(
 
     # Device
     device=None,                   # auto-detect if None
+    mode='forehead'
 
     # FFT
-    n_fft = 512,
-    hop_length = 128,
-    win_length = 512,
-    center = True,
-    pad_mode = "reflect",
-    onesided = True
+    # n_fft = 512,
+    # hop_length = 128,
+    # win_length = 512,
+    # center = True,
+    # pad_mode = "reflect",
+    # onesided = True
 )
 
 
@@ -133,39 +130,29 @@ def train(config=None):
 
     # ── Data ───────────────────────────────────────────────────────────
     train_loader = create_dataloader(
-        path=cfg['path_train'],
+        repo=cfg['repo'],
+        split='train',
+        mode=cfg['mode'],
         batch_size=cfg['batch_size'],
         num_workers=cfg['num_workers'],
-        snr_min=cfg['snr_min'],
-        snr_max=cfg['snr_max'],
-        n_fft=cfg['n_fft'],
-        hop_length=cfg['hop_length'],
-        win_length=cfg['win_length'],
-        center=cfg['center'],
-        pad_mode=cfg['pad_mode'],
-        onesided=cfg['onesided']
+        snr_range=cfg['snr_range'],
+        spec_config={}
     )
+
     val_loader = create_dataloader(
-        path=cfg['path_test'],
+        repo=cfg['repo'],
+        split='test',
+        mode=cfg['mode'],
         batch_size=cfg['batch_size'],
         num_workers=cfg['num_workers'],
-        snr_min=cfg['snr_min'],
-        snr_max=cfg['snr_max'],
-        n_fft=cfg['n_fft'],
-        hop_length=cfg['hop_length'],
-        win_length=cfg['win_length'],
-        center=cfg['center'],
-        pad_mode=cfg['pad_mode'],
-        onesided=cfg['onesided']
+        snr_range=cfg['snr_range'],
+        spec_config={}
     )
-    
-    print(f"Train batches: {len(train_loader)}")
-    # print(f"Train batches: {len(train_loader)} | Val batches: {len(val_loader)}")
+
+    print(f"Train batches: {len(train_loader)} | Val batches: {len(val_loader)}")
 
     # ── Loss & Optimizer ───────────────────────────────────────────────
-    loss_fn = HybridLoss(
-        
-    ).to(device)
+    loss_fn = HybridLoss(spec_config={}).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg["lr"])
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=5
@@ -201,8 +188,6 @@ def train(config=None):
 
             loss = loss_fn(pred, ac_clean)
             loss.backward()
-            # ll = loss.item()
-            # print(f'{epoch = }, {batch_idx = }, {ll = :.2f}')
 
             if cfg["grad_clip"] > 0:
                 nn.utils.clip_grad_norm_(model.parameters(), cfg["grad_clip"])

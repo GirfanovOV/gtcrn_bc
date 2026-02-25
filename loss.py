@@ -1,26 +1,18 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from util import spec_transformator
 
 class HybridLoss(nn.Module):
     def __init__(self,
-        nfft=512,
-        hop_length=128,
-        center=True,
-        onesided=True,
+        spec_config={},
         length=32000,
         compress_exp=0.3,
     ):
         super().__init__()
-        self.nfft = nfft
-        self.hop = hop_length
-        self.center = center
-        self.onesided = onesided
+        self.s_tr = spec_transformator(spec_config=spec_config)
         self.length = length
         self.compress_exp = compress_exp
-
-        # Match the window you used in torch.stft
-        self.register_buffer("window", torch.hann_window(nfft))
 
     def forward(self, pred_stft, true_stft):
         pred_real, pred_imag = pred_stft[..., 0], pred_stft[..., 1]
@@ -40,21 +32,12 @@ class HybridLoss(nn.Module):
         mag_loss  = F.mse_loss(pred_mag ** self.compress_exp, true_mag ** self.compress_exp)
 
         # ISTFT with the SAME window as STFT
-        win = self.window.to(device=pred_real.device, dtype=pred_real.dtype)
-
         Yp = torch.complex(pred_real, pred_imag)
         Yt = torch.complex(true_real, true_imag)
-        y_pred = torch.istft(
-            Yp, n_fft=self.nfft, hop_length=self.hop, win_length=self.nfft,
-            window=win, center=self.center, normalized=False,
-            onesided=self.onesided, length=self.length
-        )
-        y_true = torch.istft(
-            Yt, n_fft=self.nfft, hop_length=self.hop, win_length=self.nfft,
-            window=win, center=self.center, normalized=False,
-            onesided=self.onesided, length=self.length
-        )
 
+        y_pred = self.s_tr.istft(Yp)
+        y_true = self.s_tr.istft(Yt)
+        
         # SI-SNR (your formula kept)
         y_true_proj = (torch.sum(y_true * y_pred, dim=-1, keepdim=True) * y_true
                        / (torch.sum(y_true ** 2, dim=-1, keepdim=True) + 1e-8))
