@@ -294,6 +294,7 @@ def parse_args():
     parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--snr_min", type=int, default=None)
     parser.add_argument("--snr_max", type=int, default=None)
+    parser.add_argument("--mode", type=str, default=None)
 
     return parser.parse_args()
 
@@ -308,6 +309,9 @@ if __name__ == "__main__":
 
     if args.num_workers is not None:
         cli_config["num_workers"] = args.num_workers
+
+    if args.mode is not None:
+        cli_config["mode"] = args.mode
 
     if args.snr_min is not None or args.snr_max is not None:
         snr_min_new = args.snr_min if args.snr_min is not None else DEFAULT_CONFIG['snr_range'][0]
