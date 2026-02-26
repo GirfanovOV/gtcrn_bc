@@ -82,7 +82,8 @@ def validate(model, val_loader, loss_fn, device, model_type):
 
     with torch.no_grad():
         for batch in val_loader:
-            ac_noisy, bc, ac_clean, _ = [x.to(device) for x in batch]
+            # ac_clean_ri, bc_ri, ac_noisy_ri, snr_db
+            ac_clean, bc, ac_noisy, _ = [x.to(device) for x in batch]
 
             pred = model(ac_noisy, bc)
 
@@ -204,6 +205,7 @@ def train(config=None):
     best_val_loss = float("inf")
 
     # for periodic saving
+    # ac_clean_ri, bc_ri, ac_noisy_ri, snr_db
     val_ac_clean, val_bc, val_ac_noisy, val_snr = next(iter(val_loader))
     val_ac_noisy = val_ac_noisy.to(device)
     val_bc = val_bc.to(device)
@@ -221,6 +223,7 @@ def train(config=None):
         pbar = make_pbar(train_loader, total=len(train_loader), desc=f"Epoch {epoch}/{cfg['epochs']}")
 
         for batch_idx, batch in enumerate(pbar):
+            # ac_clean_ri, bc_ri, ac_noisy_ri, snr_db
             ac_clean, bc, ac_noisy, _ = [x.to(device) for x in batch]
             optimizer.zero_grad()
 
@@ -290,6 +293,8 @@ def parse_args():
 
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--num_workers", type=int, default=None)
+    parser.add_argument("--snr_min", type=int, default=None)
+    parser.add_argument("--snr_max", type=int, default=None)
 
     return parser.parse_args()
 
@@ -304,5 +309,8 @@ if __name__ == "__main__":
 
     if args.num_workers is not None:
         cli_config["num_workers"] = args.num_workers
+
+    if args.snr_min is not None and args.snr_max is not None:
+        cli_config['snr_range'] = (args.snr_min, args.snr_max)
 
     train(cli_config)
