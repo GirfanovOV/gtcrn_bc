@@ -32,7 +32,8 @@ class VibravoxLocal(Dataset):
 
 def make_collate_fn(snr_range, spec_config={}):
 
-    s_tr = spec_transformator(spec_config=spec_config)
+    # s_tr = spec_transformator(spec_config=spec_config)
+
     def collate(batch):
         # batch: list of (ac_clean [32000], bc [32000])
         batch = [x for x in batch if x is not None]
@@ -40,8 +41,11 @@ def make_collate_fn(snr_range, spec_config={}):
         ac_clean = torch.stack(ac_list, dim=0)  # [B, 32000]
         bc = torch.stack(bc_list, dim=0)        # [B, 32000]
 
-        X = s_tr.stft(ac_clean)
-        X_bc = s_tr.stft(bc)
+        # X = s_tr.stft(ac_clean)
+        # X_bc = s_tr.stft(bc)
+
+        X = torch.stft(ac_clean, 512, 256, 512, torch.hann_window(512).pow(0.5), return_complex=True)
+        X_bc = torch.stft(bc, 512, 256, 512, torch.hann_window(512).pow(0.5), return_complex=True)
 
         # Complex Gaussian noise
         N = torch.complex(torch.randn_like(X.real), torch.randn_like(X.real))
@@ -76,11 +80,10 @@ def create_dataloader(
         mode='forehead',
         batch_size=8,
         num_workers=0,
-        snr_range=(0,20),
-        spec_config={}
+        snr_range=(0,20)
 ):
     dataset = VibravoxLocal(repo, split, mode)
-    collate = make_collate_fn(snr_range=snr_range, spec_config=spec_config)
+    collate = make_collate_fn(snr_range=snr_range)
     loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
