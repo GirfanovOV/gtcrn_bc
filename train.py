@@ -114,7 +114,7 @@ def save_examples(epoch, model, val_ac_noisy, val_bc, val_ac_clean, val_snr):
     bc = torch.istft(val_bc, 512, 256, 512, window=torch.hann_window(512).pow(0.5)).cpu()
 
 
-    for i in range(pred_s.shape[0]):
+    for i in range(min(pred_s.shape[0], 2)):
         f_name = f'examples/ep_{epoch}_b_{i}_AC_clean.wav'
         sf.write(f_name, ac_clean[i].detach().numpy(), samplerate=16000)
         f_name = f'examples/ep_{epoch}_b_{i}_AC_noisy_SNR_{val_snr[i]:.2f}.wav'
@@ -309,7 +309,9 @@ if __name__ == "__main__":
     if args.num_workers is not None:
         cli_config["num_workers"] = args.num_workers
 
-    if args.snr_min is not None and args.snr_max is not None:
-        cli_config['snr_range'] = (args.snr_min, args.snr_max)
+    if args.snr_min is not None or args.snr_max is not None:
+        snr_min_new = args.snr_min if args.snr_min is not None else DEFAULT_CONFIG['snr_range'][0]
+        snr_max_new = args.snr_max if args.snr_max is not None else DEFAULT_CONFIG['snr_range'][1]
+        cli_config['snr_range'] = (snr_min_new, snr_max_new)
 
     train(cli_config)
