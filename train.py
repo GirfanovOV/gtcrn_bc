@@ -213,7 +213,6 @@ def train(config=None):
 
 
     for epoch in range(1, cfg["epochs"] + 1):
-        save_examples(epoch, model, val_ac_noisy, val_bc, val_ac_clean, val_snr)
         
         model.train()
         epoch_loss = 0.0
