@@ -1,0 +1,7 @@
+torch
+torchaudio
+torchcodec
+soundfile
+numpy
+tqdm
+datasets
