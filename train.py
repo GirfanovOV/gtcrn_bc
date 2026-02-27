@@ -140,7 +140,8 @@ def save_examples(epoch, model, val_examples, device):
     bc_model_in         = torch.view_as_real(_stft(bc).to(device))
 
     pred = model(ac_noisy_model_in, bc_model_in)
-    pred = torch.view_as_complex(pred)
+    # pred = torch.view_as_complex(pred)
+    pred = torch.complex(pred[...,0], pred[...,1])
     pred = _istft(pred)
 
     for i in range(min(pred.shape[0], 2)):
@@ -152,7 +153,6 @@ def save_examples(epoch, model, val_examples, device):
         sf.write(f_name, bc[i].detach().numpy(), samplerate=16000)
         f_name = f'examples/ep_{epoch}_b_{i}_pred.wav'
         sf.write(f_name, pred[i].detach().numpy(), samplerate=16000)
-
 
 def train(config=None):
     """
