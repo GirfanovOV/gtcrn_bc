@@ -178,9 +178,9 @@ def train(config=None):
     total, trainable = count_parameters(model)
     print(f"Model: {cfg['model_type']} | Params: {total:,} total, {trainable:,} trainable")
 
-    pesq = PerceptualEvaluationSpeechQuality(16000, 'wb')
-    stoi = ShortTimeObjectiveIntelligibility(16000)
-    si_snr = ScaleInvariantSignalNoiseRatio()
+    pesq = PerceptualEvaluationSpeechQuality(16000, 'wb').to(device)
+    stoi = ShortTimeObjectiveIntelligibility(16000).to(device)
+    si_snr = ScaleInvariantSignalNoiseRatio().to(device)
 
     metrics = dict(pesq=pesq, stoi=stoi, si_snr=si_snr)
 
