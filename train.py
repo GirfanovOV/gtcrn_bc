@@ -115,12 +115,13 @@ def validate(model, val_loader, loss_fn, metrics: dict, device):
             total_loss += loss.item()
             n_batches += 1
             
-            ac_clean = batch['ac_clean'].to(device)
-            ac_pred  = _istft(pred)
+            if len(metrics) > 0:
+                ac_clean = batch['ac_clean'].to(device)
+                ac_pred  = _istft(pred)
 
-            for m in metrics.values():
-                # (pred, target)
-                m.update(ac_pred, ac_clean)
+                for m in metrics.values():
+                    # (pred, target)
+                    m.update(ac_pred, ac_clean)
 
     return total_loss / max(n_batches, 1)
 
@@ -265,7 +266,12 @@ def train(config=None):
 
         # ── Epoch summary ──────────────────────────────────────────────
         train_loss = epoch_loss / max(n_batches, 1)
-        val_loss = validate(model, val_loader, loss_fn, metrics, device)
+        
+        if epoch % 10 == 0:
+            val_loss = validate(model, val_loader, loss_fn, metrics, device)
+        else:
+            val_loss = validate(model, val_loader, loss_fn, {}, device)
+        
         elapsed = time.time() - t0
 
         history["train_loss"].append(train_loss)
@@ -279,9 +285,10 @@ def train(config=None):
               f"lr: {lr_now:.2e} | time: {elapsed:.1f}s"
         )
         
-        for k,v in metrics.items():
-            print(f'{k}: {v.compute().cpu().item():.2f}', end=' ')
-        print()
+        if epoch % 10 == 0:
+            for k,v in metrics.items():
+                print(f'{k}: {v.compute().cpu().item():.2f}', end=', ')
+            print()
 
         # Save best
         if val_loss < best_val_loss:
