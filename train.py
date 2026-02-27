@@ -180,12 +180,11 @@ def train(config=None):
     total, trainable = count_parameters(model)
     print(f"Model: {cfg['model_type']} | Params: {total:,} total, {trainable:,} trainable")
 
-    # pesq = PerceptualEvaluationSpeechQuality(16000, 'wb').to(device)
+    pesq = PerceptualEvaluationSpeechQuality(16000, 'wb').to(device)
     stoi = ShortTimeObjectiveIntelligibility(16000).to(device)
     si_snr = ScaleInvariantSignalNoiseRatio().to(device)
 
-    metrics = dict(stoi=stoi, si_snr=si_snr)
-    # metrics = dict(pesq=pesq, stoi=stoi, si_snr=si_snr)
+    metrics = dict(pesq=pesq, stoi=stoi, si_snr=si_snr)
 
     print('Train config:')
     pprint(cfg)
