@@ -92,12 +92,15 @@ def count_parameters(model):
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     return total, trainable
 
-def validate(model, val_loader, loss_fn, device,):
+def validate(model, val_loader, loss_fn, metrics: dict, device):
     """Run validation loop, return average loss."""
     model.eval()
     total_loss = 0.0
     n_batches = 0
     pbar = make_pbar(val_loader)
+    
+    for m in metrics.values():
+        m.reset()
 
     with torch.no_grad():
         for batch in pbar:
@@ -110,6 +113,13 @@ def validate(model, val_loader, loss_fn, device,):
             loss = loss_fn(pred, ac_clean).cpu()
             total_loss += loss.item()
             n_batches += 1
+            
+            ac_clean = batch['ac_clean'].cpu()
+            ac_pred  = _istft(pred).cpu()
+
+            for m in metrics.values():
+                # (pred, target)
+                m.update(ac_pred, ac_clean)
 
     return total_loss / max(n_batches, 1)
 
@@ -171,6 +181,8 @@ def train(config=None):
     pesq = PerceptualEvaluationSpeechQuality(16000, 'wb')
     stoi = ShortTimeObjectiveIntelligibility(16000)
     si_snr = ScaleInvariantSignalNoiseRatio()
+
+    metrics = dict(pesq=pesq, stoi=stoi, si_snr=si_snr)
 
     print('Train config:')
     pprint(cfg)
@@ -249,7 +261,7 @@ def train(config=None):
 
         # ── Epoch summary ──────────────────────────────────────────────
         train_loss = epoch_loss / max(n_batches, 1)
-        val_loss = validate(model, val_loader, loss_fn, device)
+        val_loss = validate(model, val_loader, loss_fn, metrics, device)
         elapsed = time.time() - t0
 
         history["train_loss"].append(train_loss)
@@ -257,11 +269,14 @@ def train(config=None):
 
         scheduler.step(val_loss)
         lr_now = optimizer.param_groups[0]["lr"]
-
+        
         print(f"Epoch {epoch}/{cfg['epochs']} | "
               f"train: {train_loss:.4f} | val: {val_loss:.4f} | "
               f"lr: {lr_now:.2e} | time: {elapsed:.1f}s"
         )
+        
+        for k,v in metrics.items():
+            print(f'{k}: {v.compute().item():.2f}')
 
         # Save best
         if val_loss < best_val_loss:
@@ -343,4 +358,42 @@ if __name__ == "__main__":
             si_snr=si_snr
         )
 
+
+        # loss, metrics against bc
+        print('AC vs BC')
+        model.eval()
+        total_loss = 0.0
+        n_batches = 0
+        pbar = make_pbar(dl)
+        
+        for m in metrics.values():
+            m.reset()
+
+        with torch.no_grad():
+            for batch in pbar:
+                ac_noisy    = torch.view_as_real(_stft(batch['ac_noisy']))
+                bc          = torch.view_as_real(_stft(batch['bc']))
+                ac_clean    = torch.view_as_real(_stft(batch['ac_clean']))
+
+
+                loss = loss_fn(bc, ac_clean).cpu()
+                total_loss += loss.item()
+                n_batches += 1
+                
+                ac_clean = batch['ac_clean'].cpu()
+                bc = batch['bc'].cpu()
+
+                for m in metrics.values():
+                    # (pred, target)
+                    m.update(bc, ac_clean)
+
+        print(f'loss: {total_loss / max(n_batches, 1)}')
+        for k, v in metrics.items():
+            print(f'{k}: {v.compute().item():.2f}')
+
+
         val_res = validate(model, dl, loss_fn, metrics, device)
+
+        print(val_res)
+        for k, v in metrics.items():
+            print(f'{k}: {v.compute().item():.2f}')
