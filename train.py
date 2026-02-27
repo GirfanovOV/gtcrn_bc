@@ -15,12 +15,18 @@ import torch.nn as nn
 from pathlib import Path
 from tqdm.auto import tqdm
 import argparse
+from util import _stft, _istft
 
 from gtcrn_bc import GTCRN
 from loss import HybridLoss
 from dataset import create_dataloader
 from pprint import pprint
 import soundfile as sf
+from torchmetrics.audio import (
+    PerceptualEvaluationSpeechQuality,
+    ShortTimeObjectiveIntelligibility,
+    ScaleInvariantSignalNoiseRatio,
+)
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -49,7 +55,7 @@ DEFAULT_CONFIG = dict(
 
     # Checkpointing
     save_dir="checkpoints",
-    save_every=5,                  # save checkpoint every N epochs
+    save_every=20,                  # save checkpoint every N epochs
 
     # Device
     device=None,                   # auto-detect if None
@@ -67,63 +73,6 @@ def get_device(requested=None):
         return torch.device("mps")
     return torch.device("cpu")
 
-
-def count_parameters(model):
-    total = sum(p.numel() for p in model.parameters())
-    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    return total, trainable
-
-
-def validate(model, val_loader, loss_fn, device, model_type):
-    """Run validation loop, return average loss."""
-    model.eval()
-    total_loss = 0.0
-    n_batches = 0
-
-    with torch.no_grad():
-        for batch in val_loader:
-            # ac_clean_ri, bc_ri, ac_noisy_ri, snr_db
-            ac_clean, bc, ac_noisy, _ = [x.to(device) for x in batch]
-
-            pred = model(ac_noisy, bc)
-
-            loss = loss_fn(pred, ac_clean)
-            total_loss += loss.item()
-            n_batches += 1
-
-    return total_loss / max(n_batches, 1)
-
-def save_examples(epoch, model, val_ac_noisy, val_bc, val_ac_clean, val_snr):
-
-
-    if not os.path.isdir('examples'):
-        os.mkdir('examples')
-
-    model.eval()
-    pred = model(val_ac_noisy, val_bc)
-    pred_c = torch.complex(pred[...,0], pred[...,1]).cpu()
-    pred_s = torch.istft(pred_c, 512, 256, 512, window=torch.hann_window(512).pow(0.5))
-
-    val_ac_noisy = torch.complex(val_ac_noisy[...,0], val_ac_noisy[...,1]).cpu()
-    ac_noisy = torch.istft(val_ac_noisy, 512, 256, 512, window=torch.hann_window(512).pow(0.5))
-
-    val_ac_clean = torch.complex(val_ac_clean[...,0], val_ac_clean[...,1]).cpu()
-    ac_clean = torch.istft(val_ac_clean, 512, 256, 512, window=torch.hann_window(512).pow(0.5))
-    
-    val_bc = torch.complex(val_bc[...,0], val_bc[...,1]).cpu()
-    bc = torch.istft(val_bc, 512, 256, 512, window=torch.hann_window(512).pow(0.5)).cpu()
-
-
-    for i in range(min(pred_s.shape[0], 2)):
-        f_name = f'examples/ep_{epoch}_b_{i}_AC_clean.wav'
-        sf.write(f_name, ac_clean[i].detach().numpy(), samplerate=16000)
-        f_name = f'examples/ep_{epoch}_b_{i}_AC_noisy_SNR_{val_snr[i]:.2f}.wav'
-        sf.write(f_name, ac_noisy[i].detach().numpy(), samplerate=16000)
-        f_name = f'examples/ep_{epoch}_b_{i}_BC.wav'
-        sf.write(f_name, bc[i].detach().numpy(), samplerate=16000)
-        f_name = f'examples/ep_{epoch}_b_{i}_pred.wav'
-        sf.write(f_name, pred_s[i].detach().numpy(), samplerate=16000)
-
 def make_pbar(iterable, total=None, desc=None):
     # Colab/TTY can be flaky; these settings are usually stable.
     return tqdm(
@@ -137,6 +86,60 @@ def make_pbar(iterable, total=None, desc=None):
         ascii=True,          # more robust in terminals
         leave=False,         # avoid accumulating bars
     )
+
+def count_parameters(model):
+    total = sum(p.numel() for p in model.parameters())
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    return total, trainable
+
+def validate(model, val_loader, loss_fn, device,):
+    """Run validation loop, return average loss."""
+    model.eval()
+    total_loss = 0.0
+    n_batches = 0
+    pbar = make_pbar(val_loader)
+
+    with torch.no_grad():
+        for batch in pbar:
+            ac_noisy    = torch.view_as_real(_stft(batch['ac_noisy']).to(device))
+            bc          = torch.view_as_real(_stft(batch['bc']).to(device))
+            ac_clean    = torch.view_as_real(_stft(batch['ac_clean']).to(device))
+
+            pred = model(ac_noisy, bc)
+
+            loss = loss_fn(pred, ac_clean).cpu()
+            total_loss += loss.item()
+            n_batches += 1
+
+    return total_loss / max(n_batches, 1)
+
+def save_examples(epoch, model, val_examples, device):
+    if not os.path.isdir('examples'):
+        os.mkdir('examples')
+
+    model.eval()
+
+    ac_noisy    = val_examples['ac_noisy'].cpu()
+    bc          = val_examples['bc'].cpu()
+    ac_clean    = val_examples['ac_clean'].cpu()
+    snr_db      = val_examples['snr_db'].cpu()
+    
+    ac_noisy_model_in   = torch.view_as_real(_stft(ac_noisy).to(device))
+    bc_model_in         = torch.view_as_real(_stft(bc).to(device))
+
+    pred = model(ac_noisy_model_in, bc_model_in)
+    pred = torch.view_as_complex(pred)
+    pred = _istft(pred)
+
+    for i in range(min(pred.shape[0], 2)):
+        f_name = f'examples/ep_{epoch}_b_{i}_AC_clean.wav'
+        sf.write(f_name, ac_clean[i].detach().numpy(), samplerate=16000)
+        f_name = f'examples/ep_{epoch}_b_{i}_AC_noisy_SNR_{snr_db[i]:.2f}.wav'
+        sf.write(f_name, ac_noisy[i].detach().numpy(), samplerate=16000)
+        f_name = f'examples/ep_{epoch}_b_{i}_BC.wav'
+        sf.write(f_name, bc[i].detach().numpy(), samplerate=16000)
+        f_name = f'examples/ep_{epoch}_b_{i}_pred.wav'
+        sf.write(f_name, pred[i].detach().numpy(), samplerate=16000)
 
 
 def train(config=None):
@@ -164,6 +167,10 @@ def train(config=None):
     model = model.to(device)
     total, trainable = count_parameters(model)
     print(f"Model: {cfg['model_type']} | Params: {total:,} total, {trainable:,} trainable")
+
+    pesq = PerceptualEvaluationSpeechQuality(16000, 'wb')
+    stoi = ShortTimeObjectiveIntelligibility(16000)
+    si_snr = ScaleInvariantSignalNoiseRatio()
 
     print('Train config:')
     pprint(cfg)
@@ -204,13 +211,7 @@ def train(config=None):
     history = {"train_loss": [], "val_loss": []}
     best_val_loss = float("inf")
 
-    # for periodic saving
-    # ac_clean_ri, bc_ri, ac_noisy_ri, snr_db
-    val_ac_clean, val_bc, val_ac_noisy, val_snr = next(iter(val_loader))
-    val_ac_noisy = val_ac_noisy.to(device)
-    val_bc = val_bc.to(device)
-
-
+    val_examples = next(iter(val_loader))
 
     for epoch in range(1, cfg["epochs"] + 1):
         
@@ -221,9 +222,11 @@ def train(config=None):
 
         pbar = make_pbar(train_loader, total=len(train_loader), desc=f"Epoch {epoch}/{cfg['epochs']}")
 
-        for batch_idx, batch in enumerate(pbar):
-            # ac_clean_ri, bc_ri, ac_noisy_ri, snr_db
-            ac_clean, bc, ac_noisy, _ = [x.to(device) for x in batch]
+        for batch in pbar:
+            ac_noisy    = torch.view_as_real(_stft(batch['ac_noisy']).to(device))
+            bc          = torch.view_as_real(_stft(batch['bc']).to(device))
+            ac_clean    = torch.view_as_real(_stft(batch['ac_clean']).to(device))
+
             optimizer.zero_grad()
 
             pred = model(ac_noisy, bc)
@@ -246,7 +249,7 @@ def train(config=None):
 
         # ── Epoch summary ──────────────────────────────────────────────
         train_loss = epoch_loss / max(n_batches, 1)
-        val_loss = validate(model, val_loader, loss_fn, device, cfg["model_type"])
+        val_loss = validate(model, val_loader, loss_fn, device)
         elapsed = time.time() - t0
 
         history["train_loss"].append(train_loss)
@@ -257,7 +260,8 @@ def train(config=None):
 
         print(f"Epoch {epoch}/{cfg['epochs']} | "
               f"train: {train_loss:.4f} | val: {val_loss:.4f} | "
-              f"lr: {lr_now:.2e} | time: {elapsed:.1f}s")
+              f"lr: {lr_now:.2e} | time: {elapsed:.1f}s"
+        )
 
         # Save best
         if val_loss < best_val_loss:
@@ -280,7 +284,7 @@ def train(config=None):
                 "val_loss": val_loss,
                 "config": cfg,
             }, save_dir / f"checkpoint_epoch{epoch}.pt")
-            save_examples(epoch, model, val_ac_noisy, val_bc, val_ac_clean, val_snr)
+            save_examples(epoch, model, val_examples, device)
 
     print(f"\nTraining complete. Best val loss: {best_val_loss:.4f}")
     print(f"Best model saved to: {save_dir / 'best_model.pt'}")
@@ -290,6 +294,7 @@ def train(config=None):
 def parse_args():
     parser = argparse.ArgumentParser(description="Train GTCRN-BC")
 
+    parser.add_argument("--check", type=int, default=None)
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--snr_min", type=int, default=None)
@@ -318,4 +323,24 @@ if __name__ == "__main__":
         snr_max_new = args.snr_max if args.snr_max is not None else DEFAULT_CONFIG['snr_range'][1]
         cli_config['snr_range'] = (snr_min_new, snr_max_new)
 
-    train(cli_config)
+    if args.check is None:
+        train(cli_config)
+    else:
+        print('Check')
+        dl = create_dataloader(split='test')
+        device = get_device()
+        model = GTCRN()
+        model = model.to(device)
+        loss_fn = HybridLoss().to(device)
+
+        pesq = PerceptualEvaluationSpeechQuality(16000, 'wb')
+        stoi = ShortTimeObjectiveIntelligibility(16000)
+        si_snr = ScaleInvariantSignalNoiseRatio()
+
+        metrics = dict(
+            pesq=pesq,
+            stoi=stoi,
+            si_snr=si_snr
+        )
+
+        val_res = validate(model, dl, loss_fn, metrics, device)

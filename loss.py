@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from util import _istft
 
 
 class HybridLoss(nn.Module):
@@ -23,10 +24,14 @@ class HybridLoss(nn.Module):
         imag_loss = nn.MSELoss()(pred_imag_c, true_imag_c)
         mag_loss = nn.MSELoss()(pred_mag**(0.3), true_mag**(0.3))
         
-        Yp = torch.complex(pred_stft_real, pred_stft_imag)
-        y_pred = torch.istft(Yp, 512, 256, 512, window=torch.hann_window(512).pow(0.5).to(device))
-        Yt = torch.complex(true_stft_real, true_stft_imag)
-        y_true = torch.istft(Yt, 512, 256, 512, window=torch.hann_window(512).pow(0.5).to(device))
+        y_pred = _istft(pred_stft)
+        # Yp = torch.complex(pred_stft_real, pred_stft_imag)
+        # y_pred = torch.istft(Yp, 512, 256, 512, window=torch.hann_window(512).pow(0.5).to(device))
+        
+        y_true = _istft(true_stft)
+        # Yt = torch.complex(true_stft_real, true_stft_imag)
+        # y_true = torch.istft(Yt, 512, 256, 512, window=torch.hann_window(512).pow(0.5).to(device))
+        
         y_true = torch.sum(y_true * y_pred, dim=-1, keepdim=True) * y_true / (torch.sum(torch.square(y_true),dim=-1,keepdim=True) + 1e-8)
 
         sisnr =  - torch.log10(torch.norm(y_true, dim=-1, keepdim=True)**2 / (torch.norm(y_pred - y_true, dim=-1, keepdim=True)**2+1e-8) + 1e-8).mean()
