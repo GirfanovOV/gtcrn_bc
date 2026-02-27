@@ -65,7 +65,8 @@ def create_dataloader(
         mode='forehead',
         batch_size=8,
         num_workers=0,
-        snr_range=(0,20)
+        snr_range=(0,20),
+        pin_memory=False
 ):
     dataset = VibravoxLocal(repo, split, mode)
     collate = make_collate_fn(snr_range=snr_range)
@@ -74,7 +75,7 @@ def create_dataloader(
         batch_size=batch_size,
         num_workers=num_workers,
         collate_fn=collate,
-        pin_memory=False,   # pinning mainly helps CUDA; can ignore on Mac
+        pin_memory=pin_memory,   # pinning mainly helps CUDA; can ignore on Mac
     )
     return loader
 

@@ -59,7 +59,8 @@ DEFAULT_CONFIG = dict(
 
     # Device
     device=None,                   # auto-detect if None
-    mode='forehead'
+    mode='forehead',
+    pin_memory=False
 )
 
 
@@ -178,11 +179,12 @@ def train(config=None):
     total, trainable = count_parameters(model)
     print(f"Model: {cfg['model_type']} | Params: {total:,} total, {trainable:,} trainable")
 
-    pesq = PerceptualEvaluationSpeechQuality(16000, 'wb').to(device)
+    # pesq = PerceptualEvaluationSpeechQuality(16000, 'wb').to(device)
     stoi = ShortTimeObjectiveIntelligibility(16000).to(device)
     si_snr = ScaleInvariantSignalNoiseRatio().to(device)
 
-    metrics = dict(pesq=pesq, stoi=stoi, si_snr=si_snr)
+    metrics = dict(stoi=stoi, si_snr=si_snr)
+    # metrics = dict(pesq=pesq, stoi=stoi, si_snr=si_snr)
 
     print('Train config:')
     pprint(cfg)
@@ -194,7 +196,8 @@ def train(config=None):
         mode=cfg['mode'],
         batch_size=cfg['batch_size'],
         num_workers=cfg['num_workers'],
-        snr_range=cfg['snr_range']
+        snr_range=cfg['snr_range'],
+        pin_memory=cfg['pin_memory']
     )
 
     val_loader = create_dataloader(
@@ -203,7 +206,8 @@ def train(config=None):
         mode=cfg['mode'],
         batch_size=cfg['batch_size'],
         num_workers=cfg['num_workers'],
-        snr_range=cfg['snr_range']
+        snr_range=cfg['snr_range'],
+        pin_memory=cfg['pin_memory']
     )
 
     print(f"Train batches: {len(train_loader)} | Val batches: {len(val_loader)}")
@@ -276,7 +280,8 @@ def train(config=None):
         )
         
         for k,v in metrics.items():
-            print(f'{k}: {v.compute().cpu().item():.2f}')
+            print(f'{k}: {v.compute().cpu().item():.2f}', end=' ')
+        print()
 
         # Save best
         if val_loss < best_val_loss:
@@ -310,6 +315,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train GTCRN-BC")
 
     parser.add_argument("--check", type=int, default=None)
+    parser.add_argument("--pin_memory", type=int, default=None)
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--snr_min", type=int, default=None)
@@ -332,6 +338,9 @@ if __name__ == "__main__":
 
     if args.mode is not None:
         cli_config["mode"] = args.mode
+    
+    if args.pin_memory is not None:
+        cli_config["pin_memory"] = (args.pin_memory == 1)
 
     if args.snr_min is not None or args.snr_max is not None:
         snr_min_new = args.snr_min if args.snr_min is not None else DEFAULT_CONFIG['snr_range'][0]
