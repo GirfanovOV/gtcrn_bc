@@ -140,9 +140,7 @@ def save_examples(epoch, model, val_examples, device):
     bc_model_in         = torch.view_as_real(_stft(bc).to(device))
 
     pred = model(ac_noisy_model_in, bc_model_in)
-    # pred = torch.view_as_complex(pred)
-    pred = torch.complex(pred[...,0], pred[...,1])
-    pred = _istft(pred)
+    pred = _istft(pred).cpu()
 
     for i in range(min(pred.shape[0], 2)):
         f_name = f'examples/ep_{epoch}_b_{i}_AC_clean.wav'
@@ -387,6 +385,8 @@ if __name__ == "__main__":
         total_loss = 0.0
         n_batches = 0
         pbar = make_pbar(dl)
+
+        save_examples(1, model, next(iter(dl)), device)
         
         for m in metrics.values():
             m.reset()
@@ -414,8 +414,11 @@ if __name__ == "__main__":
             print(f'{k}: {v.compute().item():.2f}')
 
 
+
+
         val_res = validate(model, dl, loss_fn, metrics, device)
 
         print(val_res)
         for k, v in metrics.items():
             print(f'{k}: {v.compute().item():.2f}')
+
