@@ -279,10 +279,12 @@ def train(config=None):
         scheduler.step(val_loss)
         lr_now = optimizer.param_groups[0]["lr"]
         
-        print(f"Epoch {epoch}/{cfg['epochs']} | "
-              f"train: {train_loss:.4f} | val: {val_loss:.4f} | "
-              f"lr: {lr_now:.2e} | time: {elapsed:.1f}s"
-        )
+        if val_loss < best_val_loss:
+            print(f"Epoch {epoch}/{cfg['epochs']} | "
+                f"train: {train_loss:.4f} | val: {val_loss:.4f} | "
+                f"lr: {lr_now:.2e} | time: {elapsed:.1f}s"
+                f"  ★ New best model saved"
+            )
         
         if epoch % 10 == 0:
             for k,v in metrics.items():
@@ -299,7 +301,7 @@ def train(config=None):
                 "val_loss": val_loss,
                 "config": cfg,
             }, save_dir / "best_model.pt")
-            print(f"  ★ New best model saved (val_loss: {val_loss:.4f})")
+            # print(f"  ★ New best model saved (val_loss: {val_loss:.4f})")
 
         # Periodic save
         if cfg["save_every"] > 0 and epoch % cfg["save_every"] == 0:
