@@ -42,7 +42,7 @@ DEFAULT_CONFIG = dict(
     snr_range=(0, 20),             # dB range for Gaussian noise on AC
 
     # Training
-    batch_size=8,
+    batch_size=128,
     lr=1e-3,
     epochs=50,
     grad_clip=5.0,
@@ -50,7 +50,7 @@ DEFAULT_CONFIG = dict(
     # Data limits (set to None for full dataset)
     max_train_samples=None,        # e.g. 2000 for quick test
     max_val_samples=None,          # e.g. 500 for quick test
-    num_workers=0,                 # 0 for Mac, 2-4 for Colab
+    num_workers=2,                 # 0 for Mac, 2-4 for Colab
 
 
     # Checkpointing
@@ -104,9 +104,9 @@ def validate(model, val_loader, loss_fn, metrics: dict, device):
 
     with torch.no_grad():
         for batch in pbar:
-            ac_noisy    = torch.view_as_real(_stft(batch['ac_noisy']).to(device))
-            bc          = torch.view_as_real(_stft(batch['bc']).to(device))
-            ac_clean    = torch.view_as_real(_stft(batch['ac_clean']).to(device))
+            ac_noisy    = torch.view_as_real(_stft(batch['ac_noisy'].to(device)))
+            bc          = torch.view_as_real(_stft(batch['bc'].to(device)))
+            ac_clean    = torch.view_as_real(_stft(batch['ac_clean'].to(device)))
 
             pred = model(ac_noisy, bc)
 
@@ -115,7 +115,7 @@ def validate(model, val_loader, loss_fn, metrics: dict, device):
             n_batches += 1
             
             ac_clean = batch['ac_clean'].to(device)
-            ac_pred  = _istft(pred).to(device)
+            ac_pred  = _istft(pred)
 
             for m in metrics.values():
                 # (pred, target)
@@ -276,7 +276,7 @@ def train(config=None):
         )
         
         for k,v in metrics.items():
-            print(f'{k}: {v.compute().item():.2f}')
+            print(f'{k}: {v.compute().cpu().item():.2f}')
 
         # Save best
         if val_loss < best_val_loss:
