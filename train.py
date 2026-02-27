@@ -285,6 +285,11 @@ def train(config=None):
                 f"lr: {lr_now:.2e} | time: {elapsed:.1f}s"
                 f"  ★ New best model saved"
             )
+        else:
+            print(f"Epoch {epoch}/{cfg['epochs']} | "
+                f"train: {train_loss:.4f} | val: {val_loss:.4f} | "
+                f"lr: {lr_now:.2e} | time: {elapsed:.1f}s"
+            )
         
         if epoch % 10 == 0:
             for k,v in metrics.items():
