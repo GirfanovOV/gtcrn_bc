@@ -114,8 +114,8 @@ def validate(model, val_loader, loss_fn, metrics: dict, device):
             total_loss += loss.item()
             n_batches += 1
             
-            ac_clean = batch['ac_clean'].cpu()
-            ac_pred  = _istft(pred).cpu()
+            ac_clean = batch['ac_clean'].to(device)
+            ac_pred  = _istft(pred).to(device)
 
             for m in metrics.values():
                 # (pred, target)
