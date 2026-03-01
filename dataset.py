@@ -3,6 +3,8 @@ from util import _stft
 from torch.utils.data import Dataset
 from datasets import load_dataset
 import torchaudio.functional as F
+import soundfile as sf
+import io
 
 
 class VibravoxLocal(Dataset):
@@ -14,89 +16,69 @@ class VibravoxLocal(Dataset):
         return len(self.ds)
 
     def __getitem__(self, idx):
-        try:
-            row = self.ds[idx]
-            ac  = row['headset_path'].get_all_samples().data
-        except:
-            return
+        row = self.ds[idx]
+        wav_ac, _ = sf.read(io.BytesIO(row['headset']['bytes']))
+        ac = torch.from_numpy(wav_ac).float()
 
         if self.mode == 'forehead':
-            bc = row["forehead_path"].get_all_samples().data
+            wav_bc, _ = sf.read(io.BytesIO(row['forehead']['bytes']))
         elif self.mode == 'temple':
-            bc = row["temple_path"].get_all_samples().data
+            wav_bc, _ = sf.read(io.BytesIO(row['temple']['bytes']))
         else:
             raise
+
+        bc = torch.from_numpy(wav_bc).float()
         
-        return dict(
-            ac_clean=ac.squeeze(),
-            bc=bc.squeeze()
-        )
+        return dict(ac_clean=ac.squeeze(), bc=bc.squeeze())
 
-def make_collate_fn(snr_range, spec_config={}):
-
-    def collate(batch):
-        batch = [x for x in batch if x is not None]
-        ac_list = [b['ac_clean'] for b in batch]
-        bc_list = [b['bc'] for b in batch]
-        ac_clean = torch.stack(ac_list, dim=0)  # [B, 32000]
-        bc = torch.stack(bc_list, dim=0)        # [B, 32000]
-
-        # Random SNR per sample
-        B = ac_clean.shape[0]
-        snr_db = torch.empty(B, device=ac_clean.device).uniform_(snr_range[0], snr_range[1])
-        
-        noise = torch.randn_like(ac_clean, device=ac_clean.device)
-        ac_noisy = F.add_noise(ac_clean, noise, snr_db)
-        
-        return dict(
-            ac_clean=ac_clean,
-            ac_noisy=ac_noisy,
-            bc=bc,
-            snr_db=snr_db
-        )
-    return collate
-
-
+class DemandNoiseSubset(Dataset):
+    def __init__(self):
+        self.ds = load_dataset('verbreb/demand_noise_subset_16k', split='noise')
+    
+    def __len__(self):
+        return len(self.ds)
+    
+    def __getitem__(self, idx):
+        row = self.ds[idx]
+        wav, _ = sf.read(io.BytesIO(row['audio']['bytes']))
+        noise = torch.from_numpy(wav).float()
+        return dict(noise=noise.squeeze())
 
 
 def create_dataloader(
-        repo='verbreb/vibravox_16k_2s_subset',
+        repo='verbreb/vibravox_16k_2s_ac_bc',
         split='train',
-        mode='forehead',
+        mode='temple',
         batch_size=8,
         num_workers=0,
-        snr_range=(0,20),
         pin_memory=False
 ):
     dataset = VibravoxLocal(repo, split, mode)
-    collate = make_collate_fn(snr_range=snr_range)
     loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
         num_workers=num_workers,
-        collate_fn=collate,
+        pin_memory=pin_memory,   # pinning mainly helps CUDA; can ignore on Mac
+    )
+    return loader
+
+def create_dataloader_noise(
+        batch_size=8,
+        num_workers=0,
+        pin_memory=False
+):
+    dataset = DemandNoiseSubset()
+    loader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        num_workers=num_workers,
         pin_memory=pin_memory,   # pinning mainly helps CUDA; can ignore on Mac
     )
     return loader
 
 
 if __name__ == '__main__':
-    ds = load_dataset('verbreb/vibravox_16k_2s_subset', split='test')
-    a = ds[0]['headset_path'].get_all_samples()
-    print(a)
-    # train_dl = create_dataloader(split='train')
-    # test_dl = create_dataloader(split='test')
-
-    # print(f'bsz: {train_dl.batch_size}, n_wrk: {train_dl.num_workers}')
-    # print(f'Train_len: {len(train_dl)}, test_len: {len(test_dl)}')
-
-    # batch = next(iter(test_dl))
-    # ac_clean=batch['ac_clean']
-    # ac_noisy=batch['ac_noisy']
-    # bc=batch['bc']
-    # snr_db=batch['snr_db']
-
-    # print(f'{ac_clean.shape = }')
-    # print(f'{bc.shape = }')
-    # print(f'{ac_noisy.shape = }')
-    # print(f'{snr_db.shape = }')
+    dl = create_dataloader()
+    print(next(iter(dl)))
+    dl_n = create_dataloader_noise()
+    print(next(iter(dl_n)))

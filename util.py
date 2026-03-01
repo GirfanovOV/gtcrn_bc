@@ -1,4 +1,6 @@
 import torch
+from tqdm.auto import tqdm
+import math
 
 DEFAULT_SPEC_CONFIG = {
     'n_fft': 512,
@@ -89,3 +91,79 @@ def _stft(signal: torch.Tensor) -> torch.Tensor:
         return_complex=True
     )
     return out
+
+def make_pbar(iterable, total=None, desc=None):
+    # Colab/TTY can be flaky; these settings are usually stable.
+    return tqdm(
+        iterable,
+        total=total,
+        desc=desc,
+        dynamic_ncols=True,
+        mininterval=0.2,
+        maxinterval=1.0,
+        smoothing=0.0,
+        ascii=True,          # more robust in terminals
+        leave=False,         # avoid accumulating bars
+    )
+
+
+def get_device(requested=None):
+    """Auto-detect best device: CUDA > MPS > CPU."""
+    if requested is not None:
+        return torch.device(requested)
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+def count_parameters(model):
+    total = sum(p.numel() for p in model.parameters())
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    return total, trainable
+
+def infinite_loader(dataloader):
+    while True:
+        for batch in dataloader:
+            yield batch
+
+def match_batch(noise: torch.Tensor, B: int) -> torch.Tensor:
+    """Repeat/crop noise on batch dim to exactly B."""
+    B1 = noise.size(0)
+    if B1 == B:
+        return noise
+    reps = math.ceil(B / B1)
+    return noise.repeat(reps, 1)[:B]
+
+def random_crop_1d(x: torch.Tensor, T: int) -> torch.Tensor:
+    """
+    x: [B, L] -> return [B, T] by random per-sample crop.
+    """
+    B, L = x.shape
+    if L < T:
+        # pad if ever needed
+        pad = T - L
+        x = torch.nn.functional.pad(x, (0, pad))
+        L = T
+    max_start = L - T
+    starts = torch.randint(0, max_start + 1, (B,), device=x.device)
+    idx = starts[:, None] + torch.arange(T, device=x.device)[None, :]
+    return x.gather(1, idx)
+
+EPS = 1e-8
+
+def add_noise_snr(signal: torch.Tensor, noise: torch.Tensor, snr_db: torch.Tensor) -> torch.Tensor:
+    """
+    signal: [B, T]
+    noise:  [B, T]
+    snr_db: [B]  (power SNR in dB)
+    """
+    # power per sample
+    sig_pow = signal.pow(2).mean(dim=1, keepdim=True)          # [B, 1]
+    noi_pow = noise.pow(2).mean(dim=1, keepdim=True) + EPS     # [B, 1]
+
+    snr_lin = (10.0 ** (snr_db / 10.0)).view(-1, 1)            # [B, 1]
+    target_noi_pow = sig_pow / (snr_lin + EPS)                 # [B, 1]
+    scale = torch.sqrt(target_noi_pow / noi_pow)               # [B, 1]
+
+    return signal + noise * scale

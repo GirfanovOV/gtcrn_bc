@@ -1,27 +1,26 @@
-"""
-Training script for GTCRN-BC.
-
-Usage from notebook:
-    from train import train
-    train(config)
-
-Usage from command line:
-    python train.py
-"""
+import math
 import os
 import time
 import torch
 import torch.nn as nn
 from pathlib import Path
-from tqdm.auto import tqdm
 import argparse
-from util import _stft, _istft
+from util import(
+    _stft,
+    _istft,
+    make_pbar,
+    get_device,
+    count_parameters,
+    infinite_loader,
+    match_batch,
+    random_crop_1d,
+    add_noise_snr
+)
 
 from gtcrn_bc import GTCRN
 from loss import HybridLoss
-from dataset import create_dataloader
+from dataset import create_dataloader, create_dataloader_noise
 from pprint import pprint
-import soundfile as sf
 from torchmetrics.audio import (
     PerceptualEvaluationSpeechQuality,
     ShortTimeObjectiveIntelligibility,
@@ -38,7 +37,6 @@ DEFAULT_CONFIG = dict(
     model_type="gtcrn_bc",         # "gtcrn_bc" or "gtcrn" (AC-only baseline)
 
     # Dataset
-    repo='verbreb/vibravox_16k_2s_subset',
     snr_range=(0, 20),             # dB range for Gaussian noise on AC
 
     # Training
@@ -52,6 +50,8 @@ DEFAULT_CONFIG = dict(
     max_val_samples=None,          # e.g. 500 for quick test
     num_workers=2,                 # 0 for Mac, 2-4 for Colab
 
+    snr_min=-5,
+    snr_max=15,
 
     # Checkpointing
     save_dir="checkpoints",
@@ -59,110 +59,42 @@ DEFAULT_CONFIG = dict(
 
     # Device
     device=None,                   # auto-detect if None
-    mode='forehead',
+    mode='temple',
     pin_memory=False
 )
 
-
-def get_device(requested=None):
-    """Auto-detect best device: CUDA > MPS > CPU."""
-    if requested is not None:
-        return torch.device(requested)
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return torch.device("mps")
-    return torch.device("cpu")
-
-def make_pbar(iterable, total=None, desc=None):
-    # Colab/TTY can be flaky; these settings are usually stable.
-    return tqdm(
-        iterable,
-        total=total,
-        desc=desc,
-        dynamic_ncols=True,
-        mininterval=0.2,
-        maxinterval=1.0,
-        smoothing=0.0,
-        ascii=True,          # more robust in terminals
-        leave=False,         # avoid accumulating bars
-    )
-
-def count_parameters(model):
-    total = sum(p.numel() for p in model.parameters())
-    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    return total, trainable
-
-def validate(model, val_loader, loss_fn, metrics: dict, device):
+def validate(model, val_loader, noise_iter, cfg, loss_fn, device):
     """Run validation loop, return average loss."""
     model.eval()
     total_loss = 0.0
     n_batches = 0
     pbar = make_pbar(val_loader)
-    
-    for m in metrics.values():
-        m.reset()
 
     with torch.no_grad():
         for batch in pbar:
-            ac_noisy    = torch.view_as_real(_stft(batch['ac_noisy'].to(device)))
-            bc          = torch.view_as_real(_stft(batch['bc'].to(device)))
-            ac_clean    = torch.view_as_real(_stft(batch['ac_clean'].to(device)))
+            bc = batch['bc'].to(device)                 # [B, T]
+            ac_clean = batch['ac_clean'].to(device)     # [B, T]
+            B, T = ac_clean.shape
+            noise_batch = next(noise_iter)['noise'].to(device)         # [B1, L]
+            
+            noise_batch = match_batch(noise_batch, B)
+            noise_batch = random_crop_1d(noise_batch, T)
+            snr_db = torch.empty(B, device=device).uniform_(cfg['snr_min'], cfg['snr_max'])  # [B]
+            ac_noisy = add_noise_snr(ac_clean, noise_batch, snr_db)  # [B, T]
+
+            bc = torch.view_as_real(_stft(bc))
+            ac_noisy = torch.view_as_real(_stft(ac_noisy))
+            ac_clean = torch.view_as_real(_stft(ac_clean))
 
             pred = model(ac_noisy, bc)
 
             loss = loss_fn(pred, ac_clean).cpu()
             total_loss += loss.item()
             n_batches += 1
-            
-            if len(metrics) > 0:
-                ac_clean = batch['ac_clean'].to(device)
-                ac_pred  = _istft(pred)
-
-                for m in metrics.values():
-                    # (pred, target)
-                    m.update(ac_pred, ac_clean)
 
     return total_loss / max(n_batches, 1)
 
-def save_examples(epoch, model, val_examples, device):
-    if not os.path.isdir('examples'):
-        os.mkdir('examples')
-
-    model.eval()
-
-    ac_noisy    = val_examples['ac_noisy'].cpu()
-    bc          = val_examples['bc'].cpu()
-    ac_clean    = val_examples['ac_clean'].cpu()
-    snr_db      = val_examples['snr_db'].cpu()
-    
-    ac_noisy_model_in   = torch.view_as_real(_stft(ac_noisy).to(device))
-    bc_model_in         = torch.view_as_real(_stft(bc).to(device))
-
-    pred = model(ac_noisy_model_in, bc_model_in)
-    pred = _istft(pred).cpu()
-
-    for i in range(min(pred.shape[0], 2)):
-        f_name = f'examples/ep_{epoch}_b_{i}_AC_clean.wav'
-        sf.write(f_name, ac_clean[i].detach().numpy(), samplerate=16000)
-        f_name = f'examples/ep_{epoch}_b_{i}_AC_noisy_SNR_{snr_db[i]:.2f}.wav'
-        sf.write(f_name, ac_noisy[i].detach().numpy(), samplerate=16000)
-        f_name = f'examples/ep_{epoch}_b_{i}_BC.wav'
-        sf.write(f_name, bc[i].detach().numpy(), samplerate=16000)
-        f_name = f'examples/ep_{epoch}_b_{i}_pred.wav'
-        sf.write(f_name, pred[i].detach().numpy(), samplerate=16000)
-
 def train(config=None):
-    """
-    Main training function.
-    
-    Args:
-        config: dict overriding DEFAULT_CONFIG values, or None for defaults.
-    
-    Returns:
-        model: trained model
-        history: dict with 'train_loss' and 'val_loss' lists
-    """
     # Merge config
     cfg = {**DEFAULT_CONFIG}
     if config:
@@ -178,35 +110,38 @@ def train(config=None):
     total, trainable = count_parameters(model)
     print(f"Model: {cfg['model_type']} | Params: {total:,} total, {trainable:,} trainable")
 
-    pesq = PerceptualEvaluationSpeechQuality(16000, 'wb').to(device)
-    stoi = ShortTimeObjectiveIntelligibility(16000).to(device)
-    si_snr = ScaleInvariantSignalNoiseRatio().to(device)
+    # pesq = PerceptualEvaluationSpeechQuality(16000, 'wb').to(device)
+    # stoi = ShortTimeObjectiveIntelligibility(16000).to(device)
+    # si_snr = ScaleInvariantSignalNoiseRatio().to(device)
 
-    metrics = dict(pesq=pesq, stoi=stoi, si_snr=si_snr)
+    # metrics = dict(pesq=pesq, stoi=stoi, si_snr=si_snr)
 
     print('Train config:')
     pprint(cfg)
 
     # ── Data ───────────────────────────────────────────────────────────
     train_loader = create_dataloader(
-        repo=cfg['repo'],
         split='train',
         mode=cfg['mode'],
         batch_size=cfg['batch_size'],
         num_workers=cfg['num_workers'],
-        snr_range=cfg['snr_range'],
         pin_memory=cfg['pin_memory']
     )
 
     val_loader = create_dataloader(
-        repo=cfg['repo'],
         split='test',
         mode=cfg['mode'],
         batch_size=cfg['batch_size'],
         num_workers=cfg['num_workers'],
-        snr_range=cfg['snr_range'],
         pin_memory=cfg['pin_memory']
     )
+
+    noise_loader = create_dataloader_noise(
+        batch_size=cfg['batch_size'],
+        num_workers=cfg['num_workers'],
+        pin_memory=cfg['pin_memory']
+    )
+    noise_iter = infinite_loader(noise_loader)
 
     print(f"Train batches: {len(train_loader)} | Val batches: {len(val_loader)}")
 
@@ -237,9 +172,19 @@ def train(config=None):
         pbar = make_pbar(train_loader, total=len(train_loader), desc=f"Epoch {epoch}/{cfg['epochs']}")
 
         for batch in pbar:
-            ac_noisy    = torch.view_as_real(_stft(batch['ac_noisy']).to(device))
-            bc          = torch.view_as_real(_stft(batch['bc']).to(device))
-            ac_clean    = torch.view_as_real(_stft(batch['ac_clean']).to(device))
+            bc = batch['bc'].to(device)                 # [B, T]
+            ac_clean = batch['ac_clean'].to(device)     # [B, T]
+            B, T = ac_clean.shape
+            noise_batch = next(noise_iter)['noise'].to(device)         # [B1, L]
+            
+            noise_batch = match_batch(noise_batch, B)
+            noise_batch = random_crop_1d(noise_batch, T)
+            snr_db = torch.empty(B, device=device).uniform_(cfg['snr_min'], cfg['snr_max'])  # [B]
+            ac_noisy = add_noise_snr(ac_clean, noise_batch, snr_db)  # [B, T]
+
+            bc = torch.view_as_real(_stft(bc))
+            ac_noisy = torch.view_as_real(_stft(ac_noisy))
+            ac_clean = torch.view_as_real(_stft(ac_clean))
 
             optimizer.zero_grad()
 
@@ -265,9 +210,9 @@ def train(config=None):
         train_loss = epoch_loss / max(n_batches, 1)
         
         if epoch % 10 == 0:
-            val_loss = validate(model, val_loader, loss_fn, metrics, device)
+            val_loss = validate(model, val_loader, noise_iter, loss_fn, device)
         else:
-            val_loss = validate(model, val_loader, loss_fn, {}, device)
+            val_loss = validate(model, val_loader, noise_iter, loss_fn, device)
         
         elapsed = time.time() - t0
 
@@ -277,22 +222,11 @@ def train(config=None):
         scheduler.step(val_loss)
         lr_now = optimizer.param_groups[0]["lr"]
         
-        if val_loss < best_val_loss:
-            print(f"Epoch {epoch}/{cfg['epochs']} | "
-                f"train: {train_loss:.4f} | val: {val_loss:.4f} | "
-                f"lr: {lr_now:.2e} | time: {elapsed:.1f}s"
-                f"  ★ New best model saved"
-            )
-        else:
-            print(f"Epoch {epoch}/{cfg['epochs']} | "
-                f"train: {train_loss:.4f} | val: {val_loss:.4f} | "
-                f"lr: {lr_now:.2e} | time: {elapsed:.1f}s"
-            )
         
-        if epoch % 10 == 0:
-            for k,v in metrics.items():
-                print(f'{k}: {v.compute().cpu().item():.2f}', end=', ')
-            print()
+        print(f"Epoch {epoch}/{cfg['epochs']} | "
+            f"train: {train_loss:.4f} | val: {val_loss:.4f} | "
+            f"lr: {lr_now:.2e} | time: {elapsed:.1f}s"
+        )
 
         # Save best
         if val_loss < best_val_loss:
@@ -315,7 +249,6 @@ def train(config=None):
                 "val_loss": val_loss,
                 "config": cfg,
             }, save_dir / f"checkpoint_epoch{epoch}.pt")
-            save_examples(epoch, model, val_examples, device)
 
     print(f"\nTraining complete. Best val loss: {best_val_loss:.4f}")
     print(f"Best model saved to: {save_dir / 'best_model.pt'}")
@@ -353,72 +286,10 @@ if __name__ == "__main__":
     if args.pin_memory is not None:
         cli_config["pin_memory"] = (args.pin_memory == 1)
 
-    if args.snr_min is not None or args.snr_max is not None:
-        snr_min_new = args.snr_min if args.snr_min is not None else DEFAULT_CONFIG['snr_range'][0]
-        snr_max_new = args.snr_max if args.snr_max is not None else DEFAULT_CONFIG['snr_range'][1]
-        cli_config['snr_range'] = (snr_min_new, snr_max_new)
+    if args.snr_min is not None:
+        cli_config["snr_min"] = args.snr_min
 
-    if args.check is None:
-        train(cli_config)
-    else:
-        print('Check')
-        dl = create_dataloader(split='test')
-        device = get_device()
-        model = GTCRN()
-        model = model.to(device)
-        loss_fn = HybridLoss().to(device)
+    if args.snr_max is not None:
+        cli_config["snr_max"] = args.snr_max
 
-        pesq = PerceptualEvaluationSpeechQuality(16000, 'wb')
-        stoi = ShortTimeObjectiveIntelligibility(16000)
-        si_snr = ScaleInvariantSignalNoiseRatio()
-
-        metrics = dict(
-            pesq=pesq,
-            stoi=stoi,
-            si_snr=si_snr
-        )
-
-
-        # loss, metrics against bc
-        print('AC vs BC')
-        model.eval()
-        total_loss = 0.0
-        n_batches = 0
-        pbar = make_pbar(dl)
-
-        save_examples(1, model, next(iter(dl)), device)
-        
-        for m in metrics.values():
-            m.reset()
-
-        with torch.no_grad():
-            for batch in pbar:
-                ac_noisy    = torch.view_as_real(_stft(batch['ac_noisy']))
-                bc          = torch.view_as_real(_stft(batch['bc']))
-                ac_clean    = torch.view_as_real(_stft(batch['ac_clean']))
-
-
-                loss = loss_fn(bc, ac_clean).cpu()
-                total_loss += loss.item()
-                n_batches += 1
-                
-                ac_clean = batch['ac_clean'].cpu()
-                bc = batch['bc'].cpu()
-
-                for m in metrics.values():
-                    # (pred, target)
-                    m.update(bc, ac_clean)
-
-        print(f'loss: {total_loss / max(n_batches, 1)}')
-        for k, v in metrics.items():
-            print(f'{k}: {v.compute().item():.2f}')
-
-
-
-
-        val_res = validate(model, dl, loss_fn, metrics, device)
-
-        print(val_res)
-        for k, v in metrics.items():
-            print(f'{k}: {v.compute().item():.2f}')
-
+    train(cli_config)
