@@ -210,9 +210,9 @@ def train(config=None):
         train_loss = epoch_loss / max(n_batches, 1)
         
         if epoch % 10 == 0:
-            val_loss = validate(model, val_loader, noise_iter, loss_fn, device)
+            val_loss = validate(model, val_loader, noise_iter, cfg, loss_fn, device)
         else:
-            val_loss = validate(model, val_loader, noise_iter, loss_fn, device)
+            val_loss = validate(model, val_loader, noise_iter, cfg, loss_fn, device)
         
         elapsed = time.time() - t0
 
