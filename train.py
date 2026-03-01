@@ -276,7 +276,7 @@ def train(config=None):
             f"lr: {lr_now:.2e} | time: {elapsed:.1f}s"
         )
 
-        if (epoch % 5 == 0):
+        if (epoch % 5 == 0) or True:
                 eval_data(val_loader, noise_iter, cfg, metrics, dnsmos, device)
                 print('Eval on data', metrics.compute(), f'DNSMOS: {dnsmos.compute().item()}')
                 eval_model(model, val_loader, noise_iter, cfg, metrics, dnsmos, device)
