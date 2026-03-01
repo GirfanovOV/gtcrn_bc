@@ -21,10 +21,12 @@ from gtcrn_bc import GTCRN
 from loss import HybridLoss
 from dataset import create_dataloader, create_dataloader_noise
 from pprint import pprint
+from torchmetrics import MetricCollection
 from torchmetrics.audio import (
     PerceptualEvaluationSpeechQuality,
     ShortTimeObjectiveIntelligibility,
     ScaleInvariantSignalNoiseRatio,
+    DeepNoiseSuppressionMeanOpinionScore
 )
 import warnings
 warnings.filterwarnings('ignore')
@@ -94,6 +96,56 @@ def validate(model, val_loader, noise_iter, cfg, loss_fn, device):
 
     return total_loss / max(n_batches, 1)
 
+def eval_model(model, val_loader, noise_iter, cfg, metrics, dnsmos, device):
+    metrics.reset()
+    dnsmos.reset()
+
+    pbar = make_pbar(val_loader)
+
+    with torch.no_grad():
+        for batch in pbar:
+            bc = batch['bc'].to(device)                 # [B, T]
+            ac_clean = batch['ac_clean'].to(device)     # [B, T]
+            B, T = ac_clean.shape
+            noise_batch = next(noise_iter)['noise'].to(device)         # [B1, L]
+            
+            noise_batch = match_batch(noise_batch, B)
+            noise_batch = random_crop_1d(noise_batch, T)
+            snr_db = torch.empty(B, device=device).uniform_(cfg['snr_min'], cfg['snr_max'])  # [B]
+            ac_noisy = add_noise_snr(ac_clean, noise_batch, snr_db)  # [B, T]
+
+            bc_model = torch.view_as_real(_stft(bc))
+            ac_noisy_model = torch.view_as_real(_stft(ac_noisy))
+
+            pred = model(ac_noisy_model, bc_model)
+            pred = _istft(pred)
+
+            metrics.update(pred, ac_clean)
+            dnsmos.update(ac_clean)
+    return
+
+def eval_data(val_loader, noise_iter, cfg, metrics, dnsmos, device):
+    metrics.reset()
+    dnsmos.reset()
+
+    pbar = make_pbar(val_loader)
+
+    with torch.no_grad():
+        for batch in pbar:
+            ac_clean = batch['ac_clean'].to(device)     # [B, T]
+            B, T = ac_clean.shape
+            noise_batch = next(noise_iter)['noise'].to(device)         # [B1, L]
+            
+            noise_batch = match_batch(noise_batch, B)
+            noise_batch = random_crop_1d(noise_batch, T)
+            snr_db = torch.empty(B, device=device).uniform_(cfg['snr_min'], cfg['snr_max'])  # [B]
+            ac_noisy = add_noise_snr(ac_clean, noise_batch, snr_db)  # [B, T]
+
+            metrics.update(ac_noisy, ac_clean)
+            dnsmos.update(ac_clean)
+    return
+
+
 def train(config=None):
     # Merge config
     cfg = {**DEFAULT_CONFIG}
@@ -109,12 +161,6 @@ def train(config=None):
     model = model.to(device)
     total, trainable = count_parameters(model)
     print(f"Model: {cfg['model_type']} | Params: {total:,} total, {trainable:,} trainable")
-
-    # pesq = PerceptualEvaluationSpeechQuality(16000, 'wb').to(device)
-    # stoi = ShortTimeObjectiveIntelligibility(16000).to(device)
-    # si_snr = ScaleInvariantSignalNoiseRatio().to(device)
-
-    # metrics = dict(pesq=pesq, stoi=stoi, si_snr=si_snr)
 
     print('Train config:')
     pprint(cfg)
@@ -160,7 +206,12 @@ def train(config=None):
     history = {"train_loss": [], "val_loss": []}
     best_val_loss = float("inf")
 
-    val_examples = next(iter(val_loader))
+    metrics = MetricCollection({
+        "si_snr": ScaleInvariantSignalNoiseRatio().to(device),
+        "pesq": PerceptualEvaluationSpeechQuality(16000, 'wb').to(device),
+        "stoi": ShortTimeObjectiveIntelligibility(16000).to(device)
+    })
+    dnsmos = DeepNoiseSuppressionMeanOpinionScore(16000, False)
 
     for epoch in range(1, cfg["epochs"] + 1):
         
@@ -209,10 +260,7 @@ def train(config=None):
         # ── Epoch summary ──────────────────────────────────────────────
         train_loss = epoch_loss / max(n_batches, 1)
         
-        if epoch % 10 == 0:
-            val_loss = validate(model, val_loader, noise_iter, cfg, loss_fn, device)
-        else:
-            val_loss = validate(model, val_loader, noise_iter, cfg, loss_fn, device)
+        val_loss = validate(model, val_loader, noise_iter, cfg, loss_fn, device)
         
         elapsed = time.time() - t0
 
@@ -227,6 +275,12 @@ def train(config=None):
             f"train: {train_loss:.4f} | val: {val_loss:.4f} | "
             f"lr: {lr_now:.2e} | time: {elapsed:.1f}s"
         )
+
+        if (epoch % 5 == 0):
+                eval_data(val_loader, noise_iter, cfg, metrics, dnsmos, device)
+                print('Eval on data', metrics.compute(), f'DNSMOS: {dnsmos.compute().item()}')
+                eval_model(model, val_loader, noise_iter, cfg, metrics, dnsmos, device)
+                print('Eval on model', metrics.compute(), f'DNSMOS: {dnsmos.compute().item()}')
 
         # Save best
         if val_loss < best_val_loss:
