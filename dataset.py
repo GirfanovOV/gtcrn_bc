@@ -81,19 +81,22 @@ def create_dataloader(
 
 
 if __name__ == '__main__':
-    train_dl = create_dataloader(split='train')
-    test_dl = create_dataloader(split='test')
+    ds = load_dataset('verbreb/vibravox_16k_2s_subset', split='test')
+    a = ds[0]['headset_path'].get_all_samples()
+    print(a)
+    # train_dl = create_dataloader(split='train')
+    # test_dl = create_dataloader(split='test')
 
-    print(f'bsz: {train_dl.batch_size}, n_wrk: {train_dl.num_workers}')
-    print(f'Train_len: {len(train_dl)}, test_len: {len(test_dl)}')
+    # print(f'bsz: {train_dl.batch_size}, n_wrk: {train_dl.num_workers}')
+    # print(f'Train_len: {len(train_dl)}, test_len: {len(test_dl)}')
 
-    batch = next(iter(test_dl))
-    ac_clean=batch['ac_clean']
-    ac_noisy=batch['ac_noisy']
-    bc=batch['bc']
-    snr_db=batch['snr_db']
+    # batch = next(iter(test_dl))
+    # ac_clean=batch['ac_clean']
+    # ac_noisy=batch['ac_noisy']
+    # bc=batch['bc']
+    # snr_db=batch['snr_db']
 
-    print(f'{ac_clean.shape = }')
-    print(f'{bc.shape = }')
-    print(f'{ac_noisy.shape = }')
-    print(f'{snr_db.shape = }')
+    # print(f'{ac_clean.shape = }')
+    # print(f'{bc.shape = }')
+    # print(f'{ac_noisy.shape = }')
+    # print(f'{snr_db.shape = }')

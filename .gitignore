@@ -1,8 +1,8 @@
 .env
 venv/
 __pycache__
-vibravox_subset_n5000_sr16000_len32000
-vibravox_subset_n1000_sr16000_len32000_test
+vibravox_subset_n20000_sr16000_len32000_train
+vibravox_subset_n2000_sr16000_len32000_test
 main.ipynb
 gtcrn_bc_notebook.ipynb
 .DS_Store
