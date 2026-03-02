@@ -280,9 +280,9 @@ def train(config=None):
 
         if epoch % 5 == 0:
                 eval_data(val_loader, noise_iter, cfg, metrics, dnsmos, device)
-                print('Eval on data', metrics.compute(), f'DNSMOS: {dnsmos.compute().item()}')
+                print('Eval on data', metrics.compute(), f'DNSMOS: {dnsmos.compute()}')
                 eval_model(model, val_loader, noise_iter, cfg, metrics, dnsmos, device)
-                print('Eval on model', metrics.compute(), f'DNSMOS: {dnsmos.compute().item()}')
+                print('Eval on model', metrics.compute(), f'DNSMOS: {dnsmos.compute()}')
 
         # Save best
         if val_loss < best_val_loss:
