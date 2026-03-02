@@ -213,16 +213,13 @@ def train(config=None):
         "pesq": PerceptualEvaluationSpeechQuality(16000, 'wb').to(device),
         "stoi": ShortTimeObjectiveIntelligibility(16000).to(device)
     })
-    # dnsmos = DeepNoiseSuppressionMeanOpinionScore(16000, False)
+    dnsmos = DeepNoiseSuppressionMeanOpinionScore(16000, False).to(device)
 
-    # eval_data(val_loader, noise_iter, cfg, metrics, dnsmos, device)
-    # print('Eval on data', metrics.compute(), f'DNSMOS: {dnsmos.compute().item()}')
-    # eval_model(model, val_loader, noise_iter, cfg, metrics, dnsmos, device)
-    # print('Eval on model', metrics.compute(), f'DNSMOS: {dnsmos.compute().item()}')
-    eval_data(val_loader, noise_iter, cfg, metrics, device)
-    print('Eval on data', metrics.compute())
-    eval_model(model, val_loader, noise_iter, cfg, metrics, device)
-    print('Eval on model', metrics.compute())
+    eval_data(val_loader, noise_iter, cfg, metrics, dnsmos, device)
+    print('Eval on data', metrics.compute(), f'DNSMOS: {dnsmos.compute().item()}')
+    eval_model(model, val_loader, noise_iter, cfg, metrics, dnsmos, device)
+    print('Eval on model', metrics.compute(), f'DNSMOS: {dnsmos.compute().item()}')
+
 
     for epoch in range(1, cfg["epochs"] + 1):
         
