@@ -96,10 +96,9 @@ def validate(model, val_loader, noise_iter, cfg, loss_fn, device):
 
     return total_loss / max(n_batches, 1)
 
-# def eval_model(model, val_loader, noise_iter, cfg, metrics, dnsmos, device):
-def eval_model(model, val_loader, noise_iter, cfg, metrics, device):
+def eval_model(model, val_loader, noise_iter, cfg, metrics, dnsmos, device):
     metrics.reset()
-    # dnsmos.reset()
+    dnsmos.reset()
 
     pbar = make_pbar(val_loader)
 
@@ -122,13 +121,12 @@ def eval_model(model, val_loader, noise_iter, cfg, metrics, device):
             pred = _istft(pred)
 
             metrics.update(pred, ac_clean)
-            # dnsmos.update(ac_clean)
+            dnsmos.update(ac_clean)
     return
 
-# def eval_data(val_loader, noise_iter, cfg, metrics, dnsmos, device):
-def eval_data(val_loader, noise_iter, cfg, metrics, device):
+def eval_data(val_loader, noise_iter, cfg, metrics, dnsmos, device):
     metrics.reset()
-    # dnsmos.reset()
+    dnsmos.reset()
 
     pbar = make_pbar(val_loader)
 
@@ -144,7 +142,7 @@ def eval_data(val_loader, noise_iter, cfg, metrics, device):
             ac_noisy = add_noise_snr(ac_clean, noise_batch, snr_db)  # [B, T]
 
             metrics.update(ac_noisy, ac_clean)
-            # dnsmos.update(ac_clean)
+            dnsmos.update(ac_clean)
     return
 
 
