@@ -167,3 +167,54 @@ def add_noise_snr(signal: torch.Tensor, noise: torch.Tensor, snr_db: torch.Tenso
     scale = torch.sqrt(target_noi_pow / noi_pow)               # [B, 1]
 
     return signal + noise * scale
+
+# def rebatch_noise(loader, n_samples=128, new_bs=8):
+#     collected = []
+#     total = 0
+
+#     # 1) collect first n_samples
+#     for batch in loader:
+#         B = batch['noise'].size(0)
+
+#         if total + B >= n_samples:
+#             collected.append(batch['noise'][: n_samples - total])
+#             break
+#         else:
+#             collected.append(batch['noise'])
+#             total += B
+
+#     # 2) concatenate into single tensor
+#     data = torch.cat(collected, dim=0)   # [128, ...]
+
+#     # 3) split into batches of new_bs
+#     rebatches = torch.split(data, new_bs)  # tuple of tensors
+
+#     return rebatches
+
+def rebatch_signal(loader, n_samples=128, new_bs=8):
+    collected_ac = []
+    collected_bc = []
+    total = 0
+
+    # 1) collect first n_samples
+    for batch in loader:
+        B = batch['ac_clean'].size(0)
+
+        if total + B >= n_samples:
+            collected_ac.append(batch['ac_clean'][: n_samples - total])
+            collected_bc.append(batch['bc'][: n_samples - total])
+            break
+        else:
+            collected_ac.append(batch['ac_clean'])
+            collected_bc.append(batch['bc'])
+            total += B
+
+    # 2) concatenate into single tensor
+    data_ac = torch.cat(collected_ac, dim=0)   # [128, ...]
+    data_bc = torch.cat(collected_bc, dim=0)   # [128, ...]
+
+    # 3) split into batches of new_bs
+    rebatches_ac = torch.split(data_ac, new_bs)  # tuple of tensors
+    rebatches_bc = torch.split(data_bc, new_bs)  # tuple of tensors
+
+    return [{'ac_clean': ac, 'bc': bc} for ac, bc in zip(rebatches_ac, rebatches_bc)]

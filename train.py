@@ -14,7 +14,8 @@ from util import(
     infinite_loader,
     match_batch,
     random_crop_1d,
-    add_noise_snr
+    add_noise_snr,
+    rebatch_signal
 )
 
 from gtcrn_bc import GTCRN
@@ -100,7 +101,7 @@ def eval_model(model, val_loader, noise_iter, cfg, metrics, dnsmos, device):
     metrics.reset()
     dnsmos.reset()
 
-    pbar = make_pbar(val_loader)
+    pbar = make_pbar(rebatch_signal(val_loader))
 
     with torch.no_grad():
         for batch in pbar:
@@ -128,7 +129,8 @@ def eval_data(val_loader, noise_iter, cfg, metrics, dnsmos, device):
     metrics.reset()
     dnsmos.reset()
 
-    pbar = make_pbar(val_loader)
+    # pbar = make_pbar(zip(rebatch_signal(val_loader), rebatch_noise(noise_iter)))
+    pbar = make_pbar(rebatch_signal(val_loader))
 
     with torch.no_grad():
         for batch in pbar:
@@ -212,12 +214,6 @@ def train(config=None):
         "stoi": ShortTimeObjectiveIntelligibility(16000).to(device)
     })
     dnsmos = DeepNoiseSuppressionMeanOpinionScore(16000, False).to(device)
-
-    eval_data(val_loader, noise_iter, cfg, metrics, dnsmos, device)
-    print('Eval on data', metrics.compute(), f'DNSMOS: {dnsmos.compute().item()}')
-    eval_model(model, val_loader, noise_iter, cfg, metrics, dnsmos, device)
-    print('Eval on model', metrics.compute(), f'DNSMOS: {dnsmos.compute().item()}')
-
 
     for epoch in range(1, cfg["epochs"] + 1):
         
