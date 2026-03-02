@@ -208,12 +208,12 @@ def train(config=None):
     history = {"train_loss": [], "val_loss": []}
     best_val_loss = float("inf")
 
-    metrics = MetricCollection({
-        "si_snr": ScaleInvariantSignalNoiseRatio().to(device),
-        "pesq": PerceptualEvaluationSpeechQuality(16000, 'wb').to(device),
-        "stoi": ShortTimeObjectiveIntelligibility(16000).to(device)
-    })
-    dnsmos = DeepNoiseSuppressionMeanOpinionScore(16000, False).to(device)
+    # metrics = MetricCollection({
+    #     "si_snr": ScaleInvariantSignalNoiseRatio().to(device),
+    #     "pesq": PerceptualEvaluationSpeechQuality(16000, 'wb').to(device),
+    #     "stoi": ShortTimeObjectiveIntelligibility(16000).to(device)
+    # })
+    # dnsmos = DeepNoiseSuppressionMeanOpinionScore(16000, False).to(device)
 
     for epoch in range(1, cfg["epochs"] + 1):
         
@@ -278,11 +278,11 @@ def train(config=None):
             f"lr: {lr_now:.2e} | time: {elapsed:.1f}s"
         )
 
-        if epoch % 5 == 0:
-                eval_data(val_loader, noise_iter, cfg, metrics, dnsmos, device)
-                print('Eval on data', metrics.compute(), f'DNSMOS: {dnsmos.compute()}')
-                eval_model(model, val_loader, noise_iter, cfg, metrics, dnsmos, device)
-                print('Eval on model', metrics.compute(), f'DNSMOS: {dnsmos.compute()}')
+        # if epoch % 5 == 0:
+        #         eval_data(val_loader, noise_iter, cfg, metrics, dnsmos, device)
+        #         print('Eval on data', metrics.compute(), f'DNSMOS: {dnsmos.compute()}')
+        #         eval_model(model, val_loader, noise_iter, cfg, metrics, dnsmos, device)
+        #         print('Eval on model', metrics.compute(), f'DNSMOS: {dnsmos.compute()}')
 
         # Save best
         if val_loss < best_val_loss:
