@@ -45,7 +45,7 @@ DEFAULT_CONFIG = dict(
     # Training
     batch_size=128,
     lr=1e-3,
-    epochs=50,
+    epochs=265,
     grad_clip=5.0,
 
     # Data limits (set to None for full dataset)
@@ -321,6 +321,7 @@ def parse_args():
     parser.add_argument("--snr_min", type=int, default=None)
     parser.add_argument("--snr_max", type=int, default=None)
     parser.add_argument("--mode", type=str, default=None)
+    parser.add_argument("--epochs", type=int, default=None)
 
     return parser.parse_args()
 
@@ -332,6 +333,9 @@ if __name__ == "__main__":
 
     if args.batch_size is not None:
         cli_config["batch_size"] = args.batch_size
+    
+    if args.epochs is not None:
+        cli_config["epochs"] = args.epochs
 
     if args.num_workers is not None:
         cli_config["num_workers"] = args.num_workers
