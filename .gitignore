@@ -9,3 +9,5 @@ gtcrn_bc_notebook.ipynb
 .DS_Store
 checkpoints
 examples
+models
+best_model_109.pt

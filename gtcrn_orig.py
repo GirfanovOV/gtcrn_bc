@@ -229,9 +229,7 @@ class Encoder(nn.Module):
     def __init__(self):
         super().__init__()
         self.en_convs = nn.ModuleList([
-            # upd for BC
-            # ConvBlock(3*3, 16, (1,5), stride=(1,2), padding=(0,2), use_deconv=False, is_last=False),
-            ConvBlock(3*6, 16, (1,5), stride=(1,2), padding=(0,2), use_deconv=False, is_last=False),
+            ConvBlock(3*3, 16, (1,5), stride=(1,2), padding=(0,2), use_deconv=False, is_last=False),
             ConvBlock(16, 16, (1,5), stride=(1,2), padding=(0,2), groups=2, use_deconv=False, is_last=False),
             GTConvBlock(16, 16, (3,3), stride=(1,1), padding=(0,1), dilation=(1,1), use_deconv=False),
             GTConvBlock(16, 16, (3,3), stride=(1,1), padding=(0,1), dilation=(2,1), use_deconv=False),
@@ -276,7 +274,7 @@ class Mask(nn.Module):
         return s
 
 
-class GTCRN(nn.Module):
+class GTCRN_orig(nn.Module):
     def __init__(self):
         super().__init__()
         self.erb = ERB(65, 64)
@@ -291,34 +289,19 @@ class GTCRN(nn.Module):
 
         self.mask = Mask()
 
-    def forward(self, spec_ac, spec_bc):
+    def forward(self, spec):
         """
-        spec_ac: (B, F, T, 2)
-        spec_bc: (B, F, T, 2)
+        spec: (B, F, T, 2)
         """
-        spec_ref = spec_ac  # (B,F,T,2)
+        spec_ref = spec  # (B,F,T,2)
 
-        spec_ac_real = spec_ac[..., 0].permute(0,2,1)
-        spec_ac_imag = spec_ac[..., 1].permute(0,2,1)
-        spec_ac_mag = torch.sqrt(spec_ac_real**2 + spec_ac_imag**2 + 1e-12)
-        
-        spec_bc_real = spec_bc[..., 0].permute(0,2,1)
-        spec_bc_imag = spec_bc[..., 1].permute(0,2,1)
-        spec_bc_mag = torch.sqrt(spec_bc_real**2 + spec_bc_imag**2 + 1e-12)
-        
-        # feat = torch.stack([spec_mag, spec_real, spec_imag], dim=1)  # (B,3,T,257)
-        feat = torch.stack([
-            spec_ac_mag,
-            spec_ac_real,
-            spec_ac_imag,
+        spec_real = spec[..., 0].permute(0,2,1)
+        spec_imag = spec[..., 1].permute(0,2,1)
+        spec_mag = torch.sqrt(spec_real**2 + spec_imag**2 + 1e-12)
+        feat = torch.stack([spec_mag, spec_real, spec_imag], dim=1)  # (B,3,T,257)
 
-            spec_bc_mag,
-            spec_bc_real,
-            spec_bc_imag,
-        ], dim=1)  # (B,6,T,257)
-
-        feat = self.erb.bm(feat)  # (B,6,T,129)
-        feat = self.sfe(feat)     # (B,18,T,129)
+        feat = self.erb.bm(feat)  # (B,3,T,129)
+        feat = self.sfe(feat)     # (B,9,T,129)
 
         feat, en_outs = self.encoder(feat)
         
@@ -333,41 +316,31 @@ class GTCRN(nn.Module):
         spec_enh = spec_enh.permute(0,3,2,1)  # (B,F,T,2)
         
         return spec_enh
-    
 
-class GTCRN_single_input(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.model = GTCRN()
-    
-    def forward(self, X):
-        """
-            X: (B, F, T, 4)
-        """
-        ac = X[...,:2]
-        bc = X[...,2:]
-        return self.model(ac, bc)
 
 if __name__ == "__main__":
-    model = GTCRN().eval()
+    pass
+    # model = GTCRN_orig().eval()
 
-    """complexity count"""
+    # """complexity count"""
     # from ptflops import get_model_complexity_info
     # flops, params = get_model_complexity_info(model, (257, 63, 2), as_strings=True,
     #                                        print_per_layer_stat=True, verbose=True)
     # print(flops, params)
 
-    """causality check"""
-    ac = torch.randn(1, 32000)
-    bc = torch.randn(1, 32000)
-
-    ac_s = torch.stft(ac, 512, 256, 512, torch.hann_window(512).pow(0.5), return_complex=True)
-    bc_s = torch.stft(bc, 512, 256, 512, torch.hann_window(512).pow(0.5), return_complex=True)
-    ac_s = torch.view_as_real(ac_s)
-    bc_s = torch.view_as_real(bc_s)
-    pred_s = model(ac_s, bc_s)
-    pred_s = torch.complex(pred_s[...,0], pred_s[...,1])
-    pred = torch.istft(pred_s, 512, 256, 512, torch.hann_window(512).pow(0.5))
-    print(pred.shape)
-    print(pred.dtype)
+    # """causality check"""
+    # a = torch.randn(1, 16000)
+    # b = torch.randn(1, 16000)
+    # c = torch.randn(1, 16000)
+    # x1 = torch.cat([a, b], dim=1)
+    # x2 = torch.cat([a, c], dim=1)
     
+    # x1 = torch.stft(x1, 512, 256, 512, torch.hann_window(512).pow(0.5), return_complex=False)
+    # x2 = torch.stft(x2, 512, 256, 512, torch.hann_window(512).pow(0.5), return_complex=False)
+    # y1 = model(x1)[0]
+    # y2 = model(x2)[0]
+    # y1 = torch.istft(y1, 512, 256, 512, torch.hann_window(512).pow(0.5), return_complex=False)
+    # y2 = torch.istft(y2, 512, 256, 512, torch.hann_window(512).pow(0.5), return_complex=False)
+    
+    # print((y1[:16000-256*2] - y2[:16000-256*2]).abs().max())
+    # print((y1[16000:] - y2[16000:]).abs().max())
