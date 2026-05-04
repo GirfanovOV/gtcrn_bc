@@ -38,6 +38,8 @@ DEFAULT_CONFIG = dict(
 
     snr_min=-5,
     snr_max=15,
+    val_deterministic=True,
+    val_snr_db=None,
 
     # Checkpointing
     save_dir="checkpoints",
@@ -90,15 +92,35 @@ def format_loss_components(components):
         f"si={components['sisnr']:.4f}"
     )
 
-def make_noisy_batch(batch, noise_iter, cfg, device):
+def center_crop_1d(x: torch.Tensor, T: int) -> torch.Tensor:
+    """
+    x: [B, L] -> return deterministic centered [B, T].
+    """
+    B, L = x.shape
+    if L < T:
+        pad = T - L
+        x = torch.nn.functional.pad(x, (0, pad))
+        L = T
+    start = (L - T) // 2
+    return x[:, start:start + T]
+
+def make_noisy_batch(batch, noise_iter, cfg, device, deterministic=False):
     bc = batch['bc'].to(device)
     ac_clean = batch['ac_clean'].to(device)
     lengths = batch['lengths'].to(device)
     batch_size, length = ac_clean.shape
 
     noise = next(noise_iter)['noise'].to(device)
-    noise = random_crop_1d(match_batch(noise, batch_size), length)
-    snr_db = torch.empty(batch_size, device=device).uniform_(cfg['snr_min'], cfg['snr_max'])
+    noise = match_batch(noise, batch_size)
+    if deterministic:
+        noise = center_crop_1d(noise, length)
+        val_snr_db = cfg['val_snr_db']
+        if val_snr_db is None:
+            val_snr_db = 0.5 * (cfg['snr_min'] + cfg['snr_max'])
+        snr_db = torch.full((batch_size,), val_snr_db, device=device, dtype=ac_clean.dtype)
+    else:
+        noise = random_crop_1d(noise, length)
+        snr_db = torch.empty(batch_size, device=device).uniform_(cfg['snr_min'], cfg['snr_max'])
 
     valid = torch.arange(length, device=device).unsqueeze(0) < lengths.unsqueeze(1)
     valid_f = valid.to(ac_clean.dtype)
@@ -134,14 +156,19 @@ def prepare_data(cfg):
         pin_memory=cfg['pin_memory']
     )
 
-    noise_loader = create_dataloader_noise(
+    train_noise_loader = create_dataloader_noise(
         batch_size=cfg['batch_size'],
         num_workers=cfg['num_workers'],
         pin_memory=cfg['pin_memory']
     )
-    noise_iter = infinite_loader(noise_loader)
+    val_noise_loader = create_dataloader_noise(
+        batch_size=cfg['batch_size'],
+        num_workers=cfg['num_workers'],
+        pin_memory=cfg['pin_memory']
+    )
+    train_noise_iter = infinite_loader(train_noise_loader)
 
-    return train_loader, val_loader, noise_iter
+    return train_loader, val_loader, train_noise_iter, val_noise_loader
 
 def train_epoch(
         pbar,
@@ -194,7 +221,7 @@ def save_checkpoint(path, epoch, model, optimizer, val_loss, cfg):
         "config": cfg,
     }, path)
 
-def validate(model, val_loader, noise_iter, cfg, loss_fn, device):
+def validate(model, val_loader, val_noise_loader, cfg, loss_fn, device):
     """Run validation loop, return average loss."""
     model.eval()
     total_loss = 0.0
@@ -204,10 +231,17 @@ def validate(model, val_loader, noise_iter, cfg, loss_fn, device):
         limit_batches(val_loader, cfg["max_val_batches"]),
         total=limited_len(val_loader, cfg["max_val_batches"]),
     )
+    noise_iter = infinite_loader(val_noise_loader)
 
     with torch.no_grad():
         for batch in pbar:
-            ac_noisy, bc, ac_clean, lengths = make_noisy_batch(batch, noise_iter, cfg, device)
+            ac_noisy, bc, ac_clean, lengths = make_noisy_batch(
+                batch,
+                noise_iter,
+                cfg,
+                device,
+                deterministic=cfg["val_deterministic"],
+            )
             ac_noisy, bc, ac_clean = to_model_inputs(ac_noisy, bc, ac_clean)
 
             pred = model(ac_noisy, bc)
@@ -235,7 +269,7 @@ def train(config=None):
     print('Train config:')
     pprint(cfg)
 
-    train_loader, val_loader, noise_iter = prepare_data(cfg)
+    train_loader, val_loader, train_noise_iter, val_noise_loader = prepare_data(cfg)
     print(f"Train batches: {len(train_loader)} | Val batches: {len(val_loader)}")
 
     # ── Loss & Optimizer ───────────────────────────────────────────────
@@ -258,8 +292,8 @@ def train(config=None):
             desc=f"Epoch {epoch}/{cfg['epochs']}",
         )
         
-        train_loss, train_components = train_epoch(pbar, cfg, noise_iter, device, model, optimizer, loss_fn)
-        val_loss, val_components = validate(model, val_loader, noise_iter, cfg, loss_fn, device)
+        train_loss, train_components = train_epoch(pbar, cfg, train_noise_iter, device, model, optimizer, loss_fn)
+        val_loss, val_components = validate(model, val_loader, val_noise_loader, cfg, loss_fn, device)
         
         scheduler.step(val_loss)
         lr_now = optimizer.param_groups[0]["lr"]
@@ -310,6 +344,14 @@ def parse_args():
     parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--snr_min", type=int, default=None)
     parser.add_argument("--snr_max", type=int, default=None)
+    parser.add_argument("--val_snr_db", type=float, default=None)
+    parser.add_argument(
+        "--random-val",
+        "--random_val",
+        dest="val_deterministic",
+        action="store_false",
+        default=None,
+    )
     parser.add_argument("--mode", type=str, default=None)
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--max_train_batches", type=int, default=None)
