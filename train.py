@@ -71,6 +71,25 @@ def limited_len(loader, max_batches):
         return len(loader)
     return min(len(loader), max_batches)
 
+def init_loss_components():
+    return {"total": 0.0, "real": 0.0, "imag": 0.0, "mag": 0.0, "sisnr": 0.0}
+
+def add_loss_components(acc, components):
+    for key in acc:
+        acc[key] += components[key].item()
+
+def average_loss_components(acc, n_batches):
+    n = max(n_batches, 1)
+    return {key: value / n for key, value in acc.items()}
+
+def format_loss_components(components):
+    return (
+        f"r={components['real']:.4f}, "
+        f"i={components['imag']:.4f}, "
+        f"m={components['mag']:.4f}, "
+        f"si={components['sisnr']:.4f}"
+    )
+
 def make_noisy_batch(batch, noise_iter, cfg, device):
     bc = batch['bc'].to(device)
     ac_clean = batch['ac_clean'].to(device)
@@ -135,6 +154,7 @@ def train_epoch(
     ):    
     model.train()
     epoch_loss = 0.0
+    component_sums = init_loss_components()
     n_batches = 0
 
     for batch in pbar:
@@ -143,7 +163,7 @@ def train_epoch(
 
         optimizer.zero_grad()
         pred = model(ac_noisy, bc)
-        loss = loss_fn(pred, ac_clean, lengths)
+        loss, components = loss_fn(pred, ac_clean, lengths, return_components=True)
         loss.backward()
 
         if cfg["grad_clip"] > 0:
@@ -151,14 +171,19 @@ def train_epoch(
 
         optimizer.step()
         epoch_loss += loss.item()
+        add_loss_components(component_sums, components)
         n_batches += 1
 
         # Update right-side metrics every 10 batches (and on batch 1)
         if (n_batches % 10 == 0) or (n_batches == 1):
-            avg_epoch_loss = epoch_loss / n_batches
-            pbar.set_postfix({"avg_loss": f"{avg_epoch_loss:.4f}"}, refresh=False)
+            avg_components = average_loss_components(component_sums, n_batches)
+            pbar.set_postfix({
+                "avg_loss": f"{avg_components['total']:.4f}",
+                "sisnr": f"{avg_components['sisnr']:.4f}",
+            }, refresh=False)
 
-    return epoch_loss / max(n_batches, 1)
+    avg_components = average_loss_components(component_sums, n_batches)
+    return epoch_loss / max(n_batches, 1), avg_components
 
 def save_checkpoint(path, epoch, model, optimizer, val_loss, cfg):
     torch.save({
@@ -173,6 +198,7 @@ def validate(model, val_loader, noise_iter, cfg, loss_fn, device):
     """Run validation loop, return average loss."""
     model.eval()
     total_loss = 0.0
+    component_sums = init_loss_components()
     n_batches = 0
     pbar = make_pbar(
         limit_batches(val_loader, cfg["max_val_batches"]),
@@ -185,9 +211,13 @@ def validate(model, val_loader, noise_iter, cfg, loss_fn, device):
             ac_noisy, bc, ac_clean = to_model_inputs(ac_noisy, bc, ac_clean)
 
             pred = model(ac_noisy, bc)
-            total_loss += loss_fn(pred, ac_clean, lengths).cpu().item()
+            loss, components = loss_fn(pred, ac_clean, lengths, return_components=True)
+            total_loss += loss.cpu().item()
+            add_loss_components(component_sums, components)
             n_batches += 1
-    return total_loss / max(n_batches, 1)
+
+    avg_components = average_loss_components(component_sums, n_batches)
+    return total_loss / max(n_batches, 1), avg_components
 
 def train(config=None):
     # Merge config
@@ -228,8 +258,8 @@ def train(config=None):
             desc=f"Epoch {epoch}/{cfg['epochs']}",
         )
         
-        train_loss = train_epoch(pbar, cfg, noise_iter, device, model, optimizer, loss_fn)
-        val_loss = validate(model, val_loader, noise_iter, cfg, loss_fn, device)
+        train_loss, train_components = train_epoch(pbar, cfg, noise_iter, device, model, optimizer, loss_fn)
+        val_loss, val_components = validate(model, val_loader, noise_iter, cfg, loss_fn, device)
         
         scheduler.step(val_loss)
         lr_now = optimizer.param_groups[0]["lr"]
@@ -238,6 +268,8 @@ def train(config=None):
             f"train: {train_loss:.4f} | val: {val_loss:.4f} | "
             f"lr: {lr_now:.2e}"
         )
+        print(f"  train components: {format_loss_components(train_components)}")
+        print(f"  val components:   {format_loss_components(val_components)}")
 
         # Save best
         if val_loss < best_val_loss:
