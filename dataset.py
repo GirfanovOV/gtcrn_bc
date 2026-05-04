@@ -2,7 +2,7 @@ import torch
 from util import _stft
 from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
-from datasets import load_dataset
+from datasets import load_dataset, DatasetDict, Audio
 import torchaudio.functional as F
 import soundfile as sf
 import io
@@ -12,13 +12,42 @@ class VibravoxLocal(Dataset):
     def __init__(self, repo, split):
         self.ds = load_dataset(repo, split=split)
 
+        audio_columns = [
+            "headset_microphone",
+            "temple_vibration_pickup",
+        ]
+
+        for col in audio_columns:
+            self.ds = self.ds.cast_column(col, Audio(decode=False))
+
     def __len__(self):
         return len(self.ds)
 
     def __getitem__(self, idx):
+        # torchcodec не работает...
+        def read_audio_no_torchcodec(audio_obj):
+            if audio_obj["bytes"] is not None:
+                data, sr = sf.read(
+                    io.BytesIO(audio_obj["bytes"]),
+                    dtype="float32",
+                    always_2d=True,
+                )
+            else:
+                data, sr = sf.read(
+                    audio_obj["path"],
+                    dtype="float32",
+                    always_2d=True,
+                )
+
+            # soundfile возвращает [samples, channels]
+            # делаем [channels, samples]
+            waveform = torch.from_numpy(data).T.contiguous()
+            return waveform, sr
+
         row = self.ds[idx]
-        ac = row['headset_microphone'].get_all_samples().data
-        bc = row['temple_vibration_pickup'].get_all_samples().data
+
+        ac, _ = read_audio_no_torchcodec(row["headset_microphone"])
+        bc, _= read_audio_no_torchcodec(row["temple_vibration_pickup"])
         return dict(ac_clean=ac.squeeze(), bc=bc.squeeze())
     
 def collate_vibravox(batch):
