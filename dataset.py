@@ -1,6 +1,7 @@
 import torch
 from util import _stft
 from torch.utils.data import Dataset
+from torch.nn.utils.rnn import pad_sequence
 from datasets import load_dataset
 import torchaudio.functional as F
 import soundfile as sf
@@ -8,28 +9,32 @@ import io
 
 
 class VibravoxLocal(Dataset):
-    def __init__(self, repo, split, mode):
+    def __init__(self, repo, split):
         self.ds = load_dataset(repo, split=split)
-        self.mode = mode
 
     def __len__(self):
         return len(self.ds)
 
     def __getitem__(self, idx):
         row = self.ds[idx]
-        wav_ac, _ = sf.read(io.BytesIO(row['headset']['bytes']))
-        ac = torch.from_numpy(wav_ac).float()
-
-        if self.mode == 'forehead':
-            wav_bc, _ = sf.read(io.BytesIO(row['forehead']['bytes']))
-        elif self.mode == 'temple':
-            wav_bc, _ = sf.read(io.BytesIO(row['temple']['bytes']))
-        else:
-            raise
-
-        bc = torch.from_numpy(wav_bc).float()
-        
+        ac = row['headset_microphone'].get_all_samples().data
+        bc = row['temple_vibration_pickup'].get_all_samples().data
         return dict(ac_clean=ac.squeeze(), bc=bc.squeeze())
+    
+def collate_vibravox(batch):
+    ac_list = [item['ac_clean'] for item in batch]
+    bc_list = [item['bc'] for item in batch]
+
+    lengths = torch.tensor([x.shape[-1] for x in ac_list], dtype=torch.long)
+
+    ac_clean = pad_sequence(ac_list, batch_first=True)
+    bc = pad_sequence(bc_list, batch_first=True)
+
+    return {
+        'ac_clean': ac_clean,
+        'bc': bc,
+        'lengths': lengths
+    }
 
 class DemandNoiseSubset(Dataset):
     def __init__(self):
@@ -46,19 +51,19 @@ class DemandNoiseSubset(Dataset):
 
 
 def create_dataloader(
-        repo='verbreb/vibravox_16k_2s_ac_bc',
+        repo='verbreb/vibravox_16k_8s_headset_temple_full',
         split='train',
-        mode='temple',
         batch_size=8,
         num_workers=0,
         pin_memory=False
 ):
-    dataset = VibravoxLocal(repo, split, mode)
+    dataset = VibravoxLocal(repo, split)
     loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
         num_workers=num_workers,
-        pin_memory=pin_memory,   # pinning mainly helps CUDA; can ignore on Mac
+        pin_memory=pin_memory,
+        collate_fn=collate_vibravox
     )
     return loader
 
