@@ -10,7 +10,6 @@ from util import(
     infinite_loader,
     match_batch,
     random_crop_1d,
-    add_noise_snr,
 )
 from gtcrn_bc import GTCRN
 from loss import HybridLoss
@@ -75,14 +74,24 @@ def limited_len(loader, max_batches):
 def make_noisy_batch(batch, noise_iter, cfg, device):
     bc = batch['bc'].to(device)
     ac_clean = batch['ac_clean'].to(device)
+    lengths = batch['lengths'].to(device)
     batch_size, length = ac_clean.shape
 
     noise = next(noise_iter)['noise'].to(device)
     noise = random_crop_1d(match_batch(noise, batch_size), length)
     snr_db = torch.empty(batch_size, device=device).uniform_(cfg['snr_min'], cfg['snr_max'])
 
-    ac_noisy = add_noise_snr(ac_clean, noise, snr_db)
-    return ac_noisy, bc, ac_clean
+    valid = torch.arange(length, device=device).unsqueeze(0) < lengths.unsqueeze(1)
+    valid_f = valid.to(ac_clean.dtype)
+    valid_count = lengths.clamp_min(1).to(ac_clean.dtype).unsqueeze(1)
+
+    sig_pow = ac_clean.pow(2).mul(valid_f).sum(dim=1, keepdim=True) / valid_count
+    noi_pow = noise.pow(2).mul(valid_f).sum(dim=1, keepdim=True) / valid_count + 1e-8
+    snr_lin = (10.0 ** (snr_db / 10.0)).view(-1, 1)
+    scale = torch.sqrt(sig_pow / (snr_lin * noi_pow + 1e-8))
+
+    ac_noisy = (ac_clean + noise * scale) * valid_f
+    return ac_noisy, bc, ac_clean, lengths
 
 def to_model_inputs(ac_noisy, bc, ac_clean=None):
     ac_noisy = torch.view_as_real(_stft(ac_noisy))
@@ -129,12 +138,12 @@ def train_epoch(
     n_batches = 0
 
     for batch in pbar:
-        ac_noisy, bc, ac_clean = make_noisy_batch(batch, noise_iter, cfg, device)
+        ac_noisy, bc, ac_clean, lengths = make_noisy_batch(batch, noise_iter, cfg, device)
         ac_noisy, bc, ac_clean = to_model_inputs(ac_noisy, bc, ac_clean)
 
         optimizer.zero_grad()
         pred = model(ac_noisy, bc)
-        loss = loss_fn(pred, ac_clean)
+        loss = loss_fn(pred, ac_clean, lengths)
         loss.backward()
 
         if cfg["grad_clip"] > 0:
@@ -172,11 +181,11 @@ def validate(model, val_loader, noise_iter, cfg, loss_fn, device):
 
     with torch.no_grad():
         for batch in pbar:
-            ac_noisy, bc, ac_clean = make_noisy_batch(batch, noise_iter, cfg, device)
+            ac_noisy, bc, ac_clean, lengths = make_noisy_batch(batch, noise_iter, cfg, device)
             ac_noisy, bc, ac_clean = to_model_inputs(ac_noisy, bc, ac_clean)
 
             pred = model(ac_noisy, bc)
-            total_loss += loss_fn(pred, ac_clean).cpu().item()
+            total_loss += loss_fn(pred, ac_clean, lengths).cpu().item()
             n_batches += 1
     return total_loss / max(n_batches, 1)
 
