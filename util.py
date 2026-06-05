@@ -56,12 +56,11 @@ class spec_transformator():
         )
         return X_istft
     
-def _istft(spec: torch.Tensor) -> torch.Tensor:
+def _istft(spec: torch.Tensor, length: int = 32000) -> torch.Tensor:
     """ 
         spec: (B, F, T, 2)
-        out : (B, 1?, 32000)
+        out : (B, length)
     """
-    LEN_OUT = 32000
     device = spec.device
     spec = torch.complex(spec[...,0], spec[...,1]).to(device)
     out = torch.istft(
@@ -69,8 +68,8 @@ def _istft(spec: torch.Tensor) -> torch.Tensor:
         512,
         256,
         512,
-        window=torch.hann_window(512).pow(0.5).to(device),
-        length=LEN_OUT
+        window=torch.hann_window(512).pow(0.5).to(device=device, dtype=spec.real.dtype),
+        length=length
     )
     return out
 
