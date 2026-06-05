@@ -1,4 +1,5 @@
 .env
+logs/
 venv/
 __pycache__
 vibravox_subset_n20000_sr16000_len32000_train

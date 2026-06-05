@@ -97,8 +97,9 @@ class HybridLoss(nn.Module):
         weighted_real = self.real_weight * real_loss
         weighted_imag = self.imag_weight * imag_loss
         weighted_mag = self.mag_weight * mag_loss
+        weighted_spectral = weighted_real + weighted_imag + weighted_mag
         weighted_sisnr = self.sisnr_weight * sisnr
-        total = weighted_real + weighted_imag + weighted_mag + weighted_sisnr
+        total = weighted_spectral + weighted_sisnr
 
         if not return_components and not return_grad_components:
             return total
@@ -123,6 +124,7 @@ class HybridLoss(nn.Module):
             "weighted_real": weighted_real,
             "weighted_imag": weighted_imag,
             "weighted_mag": weighted_mag,
+            "weighted_spectral": weighted_spectral,
             "weighted_sisnr": weighted_sisnr,
         }
         return total, components, grad_components
