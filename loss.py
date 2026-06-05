@@ -47,7 +47,14 @@ class HybridLoss(nn.Module):
         noise_pow = (y_pred - y_target).pow(2).mul(mask).sum(dim=-1, keepdim=True)
         return -torch.log10(target_pow / (noise_pow + 1e-8) + 1e-8).mean()
 
-    def forward(self, pred_stft, true_stft, lengths=None, return_components=False):
+    def forward(
+            self,
+            pred_stft,
+            true_stft,
+            lengths=None,
+            return_components=False,
+            return_grad_components=False
+        ):
         device = pred_stft.device
 
         pred_stft_real, pred_stft_imag = pred_stft[:,:,:,0], pred_stft[:,:,:,1]
@@ -93,7 +100,7 @@ class HybridLoss(nn.Module):
         weighted_sisnr = self.sisnr_weight * sisnr
         total = weighted_real + weighted_imag + weighted_mag + weighted_sisnr
 
-        if not return_components:
+        if not return_components and not return_grad_components:
             return total
 
         components = {
@@ -107,7 +114,18 @@ class HybridLoss(nn.Module):
             "weighted_mag": weighted_mag.detach(),
             "weighted_sisnr": weighted_sisnr.detach(),
         }
-        return total, components
+
+        if not return_grad_components:
+            return total, components
+
+        grad_components = {
+            "total": total,
+            "weighted_real": weighted_real,
+            "weighted_imag": weighted_imag,
+            "weighted_mag": weighted_mag,
+            "weighted_sisnr": weighted_sisnr,
+        }
+        return total, components, grad_components
 
 
 if __name__ == "__main__":

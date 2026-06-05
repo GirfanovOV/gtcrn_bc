@@ -56,6 +56,7 @@ DEFAULT_CONFIG = dict(
     save_every=20,                  # save checkpoint every N epochs
     save_checkpoints=True,
     loss_log_path=None,             # optional CSV path for loss component logging
+    grad_log_path=None,             # optional CSV path for last-batch gradient norm logging
 
     # Device
     device=None,                   # auto-detect if None
@@ -155,6 +156,55 @@ def append_loss_log(path, epoch, split, lr, components):
         writer = csv.DictWriter(f, fieldnames=LOSS_LOG_FIELDS)
         writer.writerow(row)
 
+GRAD_LOG_FIELDS = [
+    "epoch",
+    "lr",
+    "grad_norm_total",
+    "grad_norm_weighted_real",
+    "grad_norm_weighted_imag",
+    "grad_norm_weighted_mag",
+    "grad_norm_weighted_sisnr",
+]
+
+def init_grad_log(path):
+    if path is None:
+        return None
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=GRAD_LOG_FIELDS)
+        writer.writeheader()
+    return path
+
+def append_grad_log(path, epoch, lr, grad_norms):
+    if path is None or grad_norms is None:
+        return
+    row = {
+        "epoch": epoch,
+        "lr": lr,
+        **grad_norms,
+    }
+    with path.open("a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=GRAD_LOG_FIELDS)
+        writer.writerow(row)
+
+def component_grad_norms(model, grad_components):
+    params = [p for p in model.parameters() if p.requires_grad]
+    norms = {}
+    for name, component in grad_components.items():
+        grads = torch.autograd.grad(
+            component,
+            params,
+            retain_graph=True,
+            allow_unused=True,
+        )
+        sq_norm = torch.zeros((), device=component.device)
+        for grad in grads:
+            if grad is not None:
+                sq_norm = sq_norm + grad.detach().pow(2).sum()
+        norms[f"grad_norm_{name}"] = sq_norm.sqrt().item()
+    return norms
+
 def center_crop_1d(x: torch.Tensor, T: int) -> torch.Tensor:
     """
     x: [B, L] -> return deterministic centered [B, T].
@@ -247,15 +297,27 @@ def train_epoch(
     model.train()
     epoch_loss = 0.0
     component_sums = init_loss_components()
+    last_batch_grad_norms = None
     n_batches = 0
 
     for batch in pbar:
+        is_last_batch = pbar.total is not None and n_batches + 1 == pbar.total
         ac_noisy, bc, ac_clean, lengths = make_noisy_batch(batch, noise_iter, cfg, device)
         ac_noisy, bc, ac_clean = to_model_inputs(ac_noisy, bc, ac_clean)
 
         optimizer.zero_grad()
         pred = model(ac_noisy, bc)
-        loss, components = loss_fn(pred, ac_clean, lengths, return_components=True)
+        if cfg["grad_log_path"] is not None and is_last_batch:
+            loss, components, grad_components = loss_fn(
+                pred,
+                ac_clean,
+                lengths,
+                return_components=True,
+                return_grad_components=True,
+            )
+            last_batch_grad_norms = component_grad_norms(model, grad_components)
+        else:
+            loss, components = loss_fn(pred, ac_clean, lengths, return_components=True)
         loss.backward()
 
         if cfg["grad_clip"] > 0:
@@ -275,7 +337,7 @@ def train_epoch(
             }, refresh=False)
 
     avg_components = average_loss_components(component_sums, n_batches)
-    return epoch_loss / max(n_batches, 1), avg_components
+    return epoch_loss / max(n_batches, 1), avg_components, last_batch_grad_norms
 
 def save_checkpoint(path, epoch, model, optimizer, val_loss, cfg):
     torch.save({
@@ -355,6 +417,9 @@ def train(config=None):
     loss_log_path = init_loss_log(cfg["loss_log_path"])
     if loss_log_path is not None:
         print(f"Loss component log: {loss_log_path}")
+    grad_log_path = init_grad_log(cfg["grad_log_path"])
+    if grad_log_path is not None:
+        print(f"Gradient norm log: {grad_log_path}")
 
     best_val_loss = float("inf")
 
@@ -365,7 +430,15 @@ def train(config=None):
             desc=f"Epoch {epoch}/{cfg['epochs']}",
         )
         
-        train_loss, train_components = train_epoch(pbar, cfg, train_noise_iter, device, model, optimizer, loss_fn)
+        train_loss, train_components, train_grad_norms = train_epoch(
+            pbar,
+            cfg,
+            train_noise_iter,
+            device,
+            model,
+            optimizer,
+            loss_fn,
+        )
         val_loss, val_components = validate(model, val_loader, val_noise_loader, cfg, loss_fn, device)
         
         scheduler.step(val_loss)
@@ -379,6 +452,7 @@ def train(config=None):
         print(f"  val components:   {format_loss_components(val_components)}")
         append_loss_log(loss_log_path, epoch, "train", lr_now, train_components)
         append_loss_log(loss_log_path, epoch, "val", lr_now, val_components)
+        append_grad_log(grad_log_path, epoch, lr_now, train_grad_norms)
 
         # Save best
         if val_loss < best_val_loss:
@@ -440,6 +514,7 @@ def parse_args():
     parser.add_argument("--max_val_batches", type=int, default=None)
     parser.add_argument("--sisnr_weight", "--sisnr-weight", type=float, default=None)
     parser.add_argument("--loss_log_path", "--loss-log-path", type=str, default=None)
+    parser.add_argument("--grad_log_path", "--grad-log-path", type=str, default=None)
 
     return parser.parse_args()
 
