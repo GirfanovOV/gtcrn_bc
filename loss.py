@@ -4,10 +4,22 @@ from util import _istft
 
 
 class HybridLoss(nn.Module):
-    def __init__(self, n_fft=512, hop_length=256):
+    def __init__(
+            self,
+            n_fft=512,
+            hop_length=256,
+            real_weight=30.0,
+            imag_weight=30.0,
+            mag_weight=70.0,
+            sisnr_weight=1.0
+        ):
         super().__init__()
         self.n_fft = n_fft
         self.hop_length = hop_length
+        self.real_weight = real_weight
+        self.imag_weight = imag_weight
+        self.mag_weight = mag_weight
+        self.sisnr_weight = sisnr_weight
 
     def _stft_mask(self, lengths, n_frames, device):
         frame_centers = torch.arange(n_frames, device=device) * self.hop_length
@@ -75,7 +87,11 @@ class HybridLoss(nn.Module):
         else:
             sisnr = self._masked_sisnr(y_pred, y_true, lengths)
 
-        total = 30*(real_loss + imag_loss) + 70*mag_loss + sisnr
+        weighted_real = self.real_weight * real_loss
+        weighted_imag = self.imag_weight * imag_loss
+        weighted_mag = self.mag_weight * mag_loss
+        weighted_sisnr = self.sisnr_weight * sisnr
+        total = weighted_real + weighted_imag + weighted_mag + weighted_sisnr
 
         if not return_components:
             return total
@@ -86,6 +102,10 @@ class HybridLoss(nn.Module):
             "imag": imag_loss.detach(),
             "mag": mag_loss.detach(),
             "sisnr": sisnr.detach(),
+            "weighted_real": weighted_real.detach(),
+            "weighted_imag": weighted_imag.detach(),
+            "weighted_mag": weighted_mag.detach(),
+            "weighted_sisnr": weighted_sisnr.detach(),
         }
         return total, components
 

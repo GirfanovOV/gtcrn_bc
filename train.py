@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from pathlib import Path
 import argparse
+import csv
 from itertools import islice
 from util import(
     _stft,
@@ -53,6 +54,7 @@ DEFAULT_CONFIG = dict(
     save_dir="checkpoints",
     save_every=20,                  # save checkpoint every N epochs
     save_checkpoints=True,
+    loss_log_path=None,             # optional CSV path for loss component logging
 
     # Device
     device=None,                   # auto-detect if None
@@ -82,7 +84,17 @@ def limited_len(loader, max_batches):
     return min(len(loader), max_batches)
 
 def init_loss_components():
-    return {"total": 0.0, "real": 0.0, "imag": 0.0, "mag": 0.0, "sisnr": 0.0}
+    return {
+        "total": 0.0,
+        "real": 0.0,
+        "imag": 0.0,
+        "mag": 0.0,
+        "sisnr": 0.0,
+        "weighted_real": 0.0,
+        "weighted_imag": 0.0,
+        "weighted_mag": 0.0,
+        "weighted_sisnr": 0.0,
+    }
 
 def add_loss_components(acc, components):
     for key in acc:
@@ -97,8 +109,50 @@ def format_loss_components(components):
         f"r={components['real']:.4f}, "
         f"i={components['imag']:.4f}, "
         f"m={components['mag']:.4f}, "
-        f"si={components['sisnr']:.4f}"
+        f"si={components['sisnr']:.4f}, "
+        f"wr={components['weighted_real']:.4f}, "
+        f"wi={components['weighted_imag']:.4f}, "
+        f"wm={components['weighted_mag']:.4f}, "
+        f"wsi={components['weighted_sisnr']:.4f}"
     )
+
+LOSS_LOG_FIELDS = [
+    "epoch",
+    "split",
+    "lr",
+    "total",
+    "real",
+    "imag",
+    "mag",
+    "sisnr",
+    "weighted_real",
+    "weighted_imag",
+    "weighted_mag",
+    "weighted_sisnr",
+]
+
+def init_loss_log(path):
+    if path is None:
+        return None
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=LOSS_LOG_FIELDS)
+        writer.writeheader()
+    return path
+
+def append_loss_log(path, epoch, split, lr, components):
+    if path is None:
+        return
+    row = {
+        "epoch": epoch,
+        "split": split,
+        "lr": lr,
+        **{key: components[key] for key in LOSS_LOG_FIELDS if key in components},
+    }
+    with path.open("a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=LOSS_LOG_FIELDS)
+        writer.writerow(row)
 
 def center_crop_1d(x: torch.Tensor, T: int) -> torch.Tensor:
     """
@@ -297,6 +351,9 @@ def train(config=None):
     # ── Checkpointing ──────────────────────────────────────────────────
     save_dir = Path(cfg["save_dir"])
     save_dir.mkdir(parents=True, exist_ok=True)
+    loss_log_path = init_loss_log(cfg["loss_log_path"])
+    if loss_log_path is not None:
+        print(f"Loss component log: {loss_log_path}")
 
     best_val_loss = float("inf")
 
@@ -319,6 +376,8 @@ def train(config=None):
         )
         print(f"  train components: {format_loss_components(train_components)}")
         print(f"  val components:   {format_loss_components(val_components)}")
+        append_loss_log(loss_log_path, epoch, "train", lr_now, train_components)
+        append_loss_log(loss_log_path, epoch, "val", lr_now, val_components)
 
         # Save best
         if val_loss < best_val_loss:
@@ -378,6 +437,7 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--max_train_batches", type=int, default=None)
     parser.add_argument("--max_val_batches", type=int, default=None)
+    parser.add_argument("--loss_log_path", "--loss-log-path", type=str, default=None)
 
     return parser.parse_args()
 
