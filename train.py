@@ -38,6 +38,7 @@ DEFAULT_CONFIG = dict(
     grad_clip=5.0,
     max_train_batches=None,
     max_val_batches=None,
+    sisnr_weight=1.0,
 
     # Data limits (set to None for full dataset)
     dataset_repo=DEFAULT_DATASET_REPO,
@@ -342,7 +343,7 @@ def train(config=None):
     print(f"Train batches: {len(train_loader)} | Val batches: {len(val_loader)}")
 
     # ── Loss & Optimizer ───────────────────────────────────────────────
-    loss_fn = HybridLoss().to(device)
+    loss_fn = HybridLoss(sisnr_weight=cfg["sisnr_weight"]).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg["lr"])
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=5
@@ -437,6 +438,7 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--max_train_batches", type=int, default=None)
     parser.add_argument("--max_val_batches", type=int, default=None)
+    parser.add_argument("--sisnr_weight", "--sisnr-weight", type=float, default=None)
     parser.add_argument("--loss_log_path", "--loss-log-path", type=str, default=None)
 
     return parser.parse_args()
