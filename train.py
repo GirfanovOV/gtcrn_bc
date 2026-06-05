@@ -22,6 +22,13 @@ warnings.filterwarnings('ignore')
 
 # ── Default configuration ──────────────────────────────────────────────────
 
+DATASET_REPOS = (
+    "verbreb/vibravox_abcs_merge_headset_temple_16k",
+    "verbreb/abcs_16k_headset_temple",
+    "verbreb/vibravox_16k_8s_headset_temple_full",
+)
+DEFAULT_DATASET_REPO = "verbreb/vibravox_16k_8s_headset_temple_full"
+
 DEFAULT_CONFIG = dict(
     # Training
     batch_size=128,
@@ -32,6 +39,7 @@ DEFAULT_CONFIG = dict(
     max_val_batches=None,
 
     # Data limits (set to None for full dataset)
+    dataset_repo=DEFAULT_DATASET_REPO,
     max_train_samples=None,        # e.g. 2000 for quick test
     max_val_samples=None,          # e.g. 500 for quick test
     num_workers=2,                 # 0 for Mac, 2-4 for Colab
@@ -143,6 +151,7 @@ def to_model_inputs(ac_noisy, bc, ac_clean=None):
 
 def prepare_data(cfg):
     train_loader = create_dataloader(
+        repo=cfg['dataset_repo'],
         split='train',
         batch_size=cfg['batch_size'],
         num_workers=cfg['num_workers'],
@@ -150,6 +159,7 @@ def prepare_data(cfg):
     )
 
     val_loader = create_dataloader(
+        repo=cfg['dataset_repo'],
         split='test',
         batch_size=cfg['batch_size'],
         num_workers=cfg['num_workers'],
@@ -258,6 +268,11 @@ def train(config=None):
     cfg = {**DEFAULT_CONFIG}
     if config:
         cfg.update(config)
+    if cfg["dataset_repo"] not in DATASET_REPOS:
+        raise ValueError(
+            f"Unknown dataset_repo={cfg['dataset_repo']!r}. "
+            f"Choose one of: {', '.join(DATASET_REPOS)}"
+        )
 
     device = get_device(cfg["device"])
     print(f"Device: {device}")
@@ -353,6 +368,13 @@ def parse_args():
         default=None,
     )
     parser.add_argument("--mode", type=str, default=None)
+    parser.add_argument(
+        "--dataset_repo",
+        "--dataset-repo",
+        choices=DATASET_REPOS,
+        default=None,
+        help=f"HF dataset repo for training. Default: {DEFAULT_DATASET_REPO}",
+    )
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--max_train_batches", type=int, default=None)
     parser.add_argument("--max_val_batches", type=int, default=None)
