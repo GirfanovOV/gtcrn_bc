@@ -2,24 +2,43 @@ import torch
 from util import _stft
 from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
-from datasets import load_dataset
+from datasets import Audio, load_dataset
 import torchaudio.functional as F
 import soundfile as sf
 import io
 
 
+TARGET_SAMPLE_RATE = 16000
+
+
+def read_audio(value, target_sample_rate=TARGET_SAMPLE_RATE):
+    source = io.BytesIO(value['bytes']) if value.get('bytes') is not None else value['path']
+    wav, sample_rate = sf.read(source, dtype='float32')
+    wav = torch.from_numpy(wav)
+
+    if wav.ndim > 1:
+        wav = wav.mean(dim=-1)
+
+    if sample_rate != target_sample_rate:
+        wav = F.resample(wav, sample_rate, target_sample_rate)
+
+    return wav.squeeze()
+
+
 class VibravoxLocal(Dataset):
     def __init__(self, repo, split):
         self.ds = load_dataset(repo, split=split)
+        for column in ('headset_microphone', 'temple_vibration_pickup'):
+            self.ds = self.ds.cast_column(column, Audio(decode=False))
 
     def __len__(self):
         return len(self.ds)
 
     def __getitem__(self, idx):
         row = self.ds[idx]
-        ac = row['headset_microphone'].get_all_samples().data
-        bc = row['temple_vibration_pickup'].get_all_samples().data
-        return dict(ac_clean=ac.squeeze(), bc=bc.squeeze())
+        ac = read_audio(row['headset_microphone'])
+        bc = read_audio(row['temple_vibration_pickup'])
+        return dict(ac_clean=ac, bc=bc)
     
 def collate_vibravox(batch):
     ac_list = [item['ac_clean'] for item in batch]
@@ -39,15 +58,14 @@ def collate_vibravox(batch):
 class DemandNoiseSubset(Dataset):
     def __init__(self):
         self.ds = load_dataset('verbreb/demand_noise_subset_16k', split='noise')
+        self.ds = self.ds.cast_column('audio', Audio(decode=False))
     
     def __len__(self):
         return len(self.ds)
     
     def __getitem__(self, idx):
         row = self.ds[idx]
-        wav, _ = sf.read(io.BytesIO(row['audio']['bytes']))
-        noise = torch.from_numpy(wav).float()
-        return dict(noise=noise.squeeze())
+        return dict(noise=read_audio(row['audio']))
 
 
 def create_dataloader(
