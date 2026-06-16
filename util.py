@@ -149,6 +149,18 @@ def random_crop_1d(x: torch.Tensor, T: int) -> torch.Tensor:
     idx = starts[:, None] + torch.arange(T, device=x.device)[None, :]
     return x.gather(1, idx)
 
+def center_crop_1d(x: torch.Tensor, T: int) -> torch.Tensor:
+    """
+    x: [B, L] -> return deterministic centered [B, T].
+    """
+    B, L = x.shape
+    if L < T:
+        pad = T - L
+        x = torch.nn.functional.pad(x, (0, pad))
+        L = T
+    start = (L - T) // 2
+    return x[:, start:start + T]
+
 EPS = 1e-8
 
 def add_noise_snr(signal: torch.Tensor, noise: torch.Tensor, snr_db: torch.Tensor) -> torch.Tensor:
