@@ -31,7 +31,7 @@ DEFAULT_CONFIG = dict(
     save_dir="checkpoints",
     save_every=20,                 # save checkpoint every N epochs
     save_checkpoints=True,
-    loss_log_path=None,            # optional CSV path for loss component logging
+    loss_log_path="checkpoints/loss_log.csv",
     grad_log_path=None,            # optional CSV path for gradient norm logging
     grad_log_interval=25,          # log gradient norms every N train batches
 
