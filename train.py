@@ -55,7 +55,7 @@ def parse_args():
     parser.add_argument("--max_train_batches", type=int, default=None)
     parser.add_argument("--max_val_batches", type=int, default=None)
     parser.add_argument("--sisnr_weight", "--sisnr-weight", type=float, default=None)
-    parser.add_argument("--loss_log_path", "--loss-log-path", type=str, default=None)
+    parser.add_argument("--checkpoint_name", "--checkpoint-name", type=str, default=None)
     parser.add_argument("--grad_log_path", "--grad-log-path", type=str, default=None)
     parser.add_argument("--grad_log_interval", "--grad-log-interval", type=int, default=None)
 
