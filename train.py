@@ -31,6 +31,7 @@ def parse_args():
         action="store_false",
     )
     parser.add_argument("--batch_size", type=int, default=None)
+    parser.add_argument("--val_batch_size", "--val-batch-size", type=int, default=None)
     parser.add_argument("--num_workers", type=int, default=None)
     parser.add_argument("--snr_min", type=int, default=None)
     parser.add_argument("--snr_max", type=int, default=None)
@@ -58,6 +59,13 @@ def parse_args():
     parser.add_argument("--checkpoint_name", "--checkpoint-name", type=str, default=None)
     parser.add_argument("--grad_log_path", "--grad-log-path", type=str, default=None)
     parser.add_argument("--grad_log_interval", "--grad-log-interval", type=int, default=None)
+    parser.add_argument(
+        "--log_cuda_memory",
+        "--log-cuda-memory",
+        dest="log_cuda_memory",
+        action="store_true",
+        default=None,
+    )
 
     return parser.parse_args()
 

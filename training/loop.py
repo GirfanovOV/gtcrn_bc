@@ -32,7 +32,21 @@ def limited_len(loader, max_batches):
     return min(len(loader), max_batches)
 
 
+def log_cuda_memory(label, cfg, device):
+    if not cfg["log_cuda_memory"] or device.type != "cuda":
+        return
+    allocated = torch.cuda.memory_allocated(device) / 1024**3
+    reserved = torch.cuda.memory_reserved(device) / 1024**3
+    peak = torch.cuda.max_memory_allocated(device) / 1024**3
+    print(
+        f"[cuda] {label}: "
+        f"allocated={allocated:.2f} GiB | reserved={reserved:.2f} GiB | peak={peak:.2f} GiB"
+    )
+
+
 def prepare_data(cfg):
+    val_batch_size = cfg["val_batch_size"] or cfg["batch_size"]
+
     train_loader = create_dataloader(
         repo=cfg["dataset_repo"],
         split="train",
@@ -46,7 +60,7 @@ def prepare_data(cfg):
     val_loader = create_dataloader(
         repo=cfg["dataset_repo"],
         split="test",
-        batch_size=cfg["batch_size"],
+        batch_size=val_batch_size,
         num_workers=cfg["num_workers"],
         pin_memory=cfg["pin_memory"],
         audio_length_sec=cfg["audio_length_sec"],
@@ -59,7 +73,7 @@ def prepare_data(cfg):
         pin_memory=cfg["pin_memory"],
     )
     val_noise_loader = create_dataloader_noise(
-        batch_size=cfg["batch_size"],
+        batch_size=val_batch_size,
         num_workers=cfg["num_workers"],
         pin_memory=cfg["pin_memory"],
     )
@@ -95,7 +109,7 @@ def train_epoch(
         ac_noisy, bc, ac_clean, lengths = make_noisy_batch(batch, noise_iter, cfg, device)
         ac_noisy, bc, ac_clean = to_model_inputs(ac_noisy, bc, ac_clean)
 
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
         pred = model(ac_noisy, bc)
         if should_log_grad:
             loss, _, grad_components = loss_fn(
@@ -140,7 +154,7 @@ def validate(model, val_loader, val_noise_loader, cfg, loss_fn, device):
     )
     noise_iter = infinite_loader(val_noise_loader)
 
-    with torch.no_grad():
+    with torch.inference_mode():
         for batch in pbar:
             ac_noisy, bc, ac_clean, lengths = make_noisy_batch(
                 batch,
@@ -216,7 +230,12 @@ def train(config=None):
             epoch,
             grad_log_path,
         )
+        log_cuda_memory(f"after train epoch {epoch}", cfg, device)
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+        log_cuda_memory(f"before val epoch {epoch}", cfg, device)
         val_loss = validate(model, val_loader, val_noise_loader, cfg, loss_fn, device)
+        log_cuda_memory(f"after val epoch {epoch}", cfg, device)
 
         scheduler.step(val_loss)
         lr_now = optimizer.param_groups[0]["lr"]

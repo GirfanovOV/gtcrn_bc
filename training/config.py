@@ -8,6 +8,7 @@ DEFAULT_DATASET_REPO = "verbreb/vibravox_16k_8s_headset_temple_full"
 DEFAULT_CONFIG = dict(
     # Training
     batch_size=64,
+    val_batch_size=None,
     lr=1e-3,
     epochs=100,
     grad_clip=5.0,
@@ -34,6 +35,7 @@ DEFAULT_CONFIG = dict(
     save_checkpoints=True,
     grad_log_path=None,            # optional CSV path for gradient norm logging
     grad_log_interval=25,          # log gradient norms every N train batches
+    log_cuda_memory=False,
 
     # Device
     device=None,                   # auto-detect if None
