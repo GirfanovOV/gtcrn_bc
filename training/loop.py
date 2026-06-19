@@ -55,6 +55,8 @@ def prepare_data(cfg):
         pin_memory=cfg["pin_memory"],
         audio_length_sec=cfg["audio_length_sec"],
         random_crop=True,
+        cache_in_memory=cfg["cache_audio_in_memory"],
+        share_memory=cfg["share_cached_audio"],
     )
 
     val_loader = create_dataloader(
@@ -65,17 +67,23 @@ def prepare_data(cfg):
         pin_memory=cfg["pin_memory"],
         audio_length_sec=cfg["audio_length_sec"],
         random_crop=False,
+        cache_in_memory=cfg["cache_audio_in_memory"],
+        share_memory=cfg["share_cached_audio"],
     )
 
     train_noise_loader = create_dataloader_noise(
         batch_size=cfg["batch_size"],
         num_workers=cfg["num_workers"],
         pin_memory=cfg["pin_memory"],
+        cache_in_memory=cfg["cache_audio_in_memory"],
+        share_memory=cfg["share_cached_audio"],
     )
     val_noise_loader = create_dataloader_noise(
         batch_size=val_batch_size,
         num_workers=cfg["num_workers"],
         pin_memory=cfg["pin_memory"],
+        cache_in_memory=cfg["cache_audio_in_memory"],
+        share_memory=cfg["share_cached_audio"],
     )
     train_noise_iter = infinite_loader(train_noise_loader)
 

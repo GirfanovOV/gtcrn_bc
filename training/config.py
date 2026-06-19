@@ -21,6 +21,8 @@ DEFAULT_CONFIG = dict(
     max_train_samples=None,        # e.g. 2000 for quick test
     max_val_samples=None,          # e.g. 500 for quick test
     audio_length_sec=8,
+    cache_audio_in_memory=False,
+    share_cached_audio=False,
     num_workers=4,                 # 0 for Mac, 2-4 for Colab
 
     snr_min=-5,

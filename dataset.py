@@ -47,6 +47,29 @@ class VibravoxLocal(Dataset):
         return dict(ac_clean=ac, bc=bc)
 
 
+class InMemoryDataset(Dataset):
+    def __init__(self, dataset, share_memory=False, name="dataset"):
+        self.items = []
+        total = len(dataset)
+        print(f"Caching {name} in RAM: {total} items")
+        for idx in range(total):
+            item = dataset[idx]
+            if share_memory:
+                item = {
+                    key: value.share_memory_() if torch.is_tensor(value) else value
+                    for key, value in item.items()
+                }
+            self.items.append(item)
+            if (idx + 1) % 1000 == 0 or idx + 1 == total:
+                print(f"  cached {idx + 1}/{total}")
+
+    def __len__(self):
+        return len(self.items)
+
+    def __getitem__(self, idx):
+        return self.items[idx]
+
+
 def _pad_or_trim_1d(x, target_num_samples, start=0):
     x = x[start:start + target_num_samples]
     if x.shape[-1] < target_num_samples:
@@ -134,8 +157,12 @@ def create_dataloader(
         pin_memory=False,
         audio_length_sec=8,
         random_crop=None,
+        cache_in_memory=False,
+        share_memory=False,
 ):
     dataset = VibravoxLocal(repo, split)
+    if cache_in_memory:
+        dataset = InMemoryDataset(dataset, share_memory=share_memory, name=f"{repo}/{split}")
     if random_crop is None:
         random_crop = split == "train"
     collate_fn = partial(
@@ -155,9 +182,13 @@ def create_dataloader(
 def create_dataloader_noise(
         batch_size=8,
         num_workers=0,
-        pin_memory=False
+        pin_memory=False,
+        cache_in_memory=False,
+        share_memory=False,
 ):
     dataset = DemandNoiseSubset()
+    if cache_in_memory:
+        dataset = InMemoryDataset(dataset, share_memory=share_memory, name="noise")
     loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,

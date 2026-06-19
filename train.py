@@ -53,6 +53,20 @@ def parse_args():
     )
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--audio_length_sec", "--audio-length-sec", type=float, default=None)
+    parser.add_argument(
+        "--cache_audio_in_memory",
+        "--cache-audio-in-memory",
+        dest="cache_audio_in_memory",
+        action="store_true",
+        default=None,
+    )
+    parser.add_argument(
+        "--share_cached_audio",
+        "--share-cached-audio",
+        dest="share_cached_audio",
+        action="store_true",
+        default=None,
+    )
     parser.add_argument("--max_train_batches", type=int, default=None)
     parser.add_argument("--max_val_batches", type=int, default=None)
     parser.add_argument("--sisnr_weight", "--sisnr-weight", type=float, default=None)

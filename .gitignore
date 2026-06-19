@@ -13,3 +13,4 @@ examples
 models
 best_model_109.pt
 data/
+*.pt
