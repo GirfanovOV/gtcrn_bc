@@ -32,7 +32,22 @@ def parse_args():
     )
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--val_batch_size", "--val-batch-size", type=int, default=None)
+    parser.add_argument("--gradient_accum_steps", "--gradient-accum-steps", type=int, default=None)
     parser.add_argument("--num_workers", type=int, default=None)
+    parser.add_argument(
+        "--no-train-shuffle",
+        "--no_train_shuffle",
+        dest="train_shuffle",
+        action="store_false",
+        default=None,
+    )
+    parser.add_argument(
+        "--no-noise-shuffle",
+        "--no_noise_shuffle",
+        dest="noise_shuffle",
+        action="store_false",
+        default=None,
+    )
     parser.add_argument("--snr_min", type=int, default=None)
     parser.add_argument("--snr_max", type=int, default=None)
     parser.add_argument("--val_snr_db", type=float, default=None)

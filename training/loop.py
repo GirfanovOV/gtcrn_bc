@@ -57,6 +57,8 @@ def prepare_data(cfg):
         random_crop=True,
         cache_in_memory=cfg["cache_audio_in_memory"],
         share_memory=cfg["share_cached_audio"],
+        shuffle=cfg["train_shuffle"],
+        max_samples=cfg["max_train_samples"],
     )
 
     val_loader = create_dataloader(
@@ -69,6 +71,8 @@ def prepare_data(cfg):
         random_crop=False,
         cache_in_memory=cfg["cache_audio_in_memory"],
         share_memory=cfg["share_cached_audio"],
+        shuffle=False,
+        max_samples=cfg["max_val_samples"],
     )
 
     train_noise_loader = create_dataloader_noise(
@@ -77,6 +81,7 @@ def prepare_data(cfg):
         pin_memory=cfg["pin_memory"],
         cache_in_memory=cfg["cache_audio_in_memory"],
         share_memory=cfg["share_cached_audio"],
+        shuffle=cfg["noise_shuffle"],
     )
     val_noise_loader = create_dataloader_noise(
         batch_size=val_batch_size,
@@ -84,6 +89,7 @@ def prepare_data(cfg):
         pin_memory=cfg["pin_memory"],
         cache_in_memory=cfg["cache_audio_in_memory"],
         share_memory=cfg["share_cached_audio"],
+        shuffle=False,
     )
     train_noise_iter = infinite_loader(train_noise_loader)
 
@@ -102,11 +108,20 @@ def train_epoch(
         grad_log_path,
     ):
     model.train()
-    epoch_loss = 0.0
+    epoch_loss_sum = 0.0
     n_batches = 0
+    n_samples = 0
+    optimizer_steps = 0
+    accum_steps = cfg["gradient_accum_steps"]
+    total_batches = pbar.total or 0
+    accum_window = accum_steps
+
+    optimizer.zero_grad(set_to_none=True)
 
     for batch in pbar:
         batch_idx = n_batches + 1
+        if n_batches % accum_steps == 0 and total_batches:
+            accum_window = min(accum_steps, total_batches - n_batches)
         grad_log_interval = cfg["grad_log_interval"]
         should_log_grad = (
             grad_log_path is not None
@@ -115,9 +130,9 @@ def train_epoch(
             and batch_idx % grad_log_interval == 0
         )
         ac_noisy, bc, ac_clean, lengths = make_noisy_batch(batch, noise_iter, cfg, device)
+        batch_size = ac_clean.size(0)
         ac_noisy, bc, ac_clean = to_model_inputs(ac_noisy, bc, ac_clean)
 
-        optimizer.zero_grad(set_to_none=True)
         pred = model(ac_noisy, bc)
         if should_log_grad:
             loss, _, grad_components = loss_fn(
@@ -129,33 +144,39 @@ def train_epoch(
             )
             grad_norms = component_grad_norms(model, grad_components)
             lr_now = optimizer.param_groups[0]["lr"]
-            total_batches = pbar.total or 0
             global_step = (epoch - 1) * total_batches + batch_idx if total_batches else batch_idx
             append_grad_log(grad_log_path, epoch, batch_idx, global_step, lr_now, grad_norms)
         else:
             loss = loss_fn(pred, ac_clean, lengths)
-        loss.backward()
+        (loss / accum_window).backward()
 
-        if cfg["grad_clip"] > 0:
-            nn.utils.clip_grad_norm_(model.parameters(), cfg["grad_clip"])
-
-        optimizer.step()
-        epoch_loss += loss.item()
+        epoch_loss_sum += loss.item() * batch_size
         n_batches += 1
+        n_samples += batch_size
+        should_step = n_batches % accum_steps == 0 or (total_batches and n_batches == total_batches)
+        if should_step:
+            if cfg["grad_clip"] > 0:
+                nn.utils.clip_grad_norm_(model.parameters(), cfg["grad_clip"])
+
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            optimizer_steps += 1
 
         if (n_batches % 10 == 0) or (n_batches == 1):
             pbar.set_postfix({
-                "avg_loss": f"{epoch_loss / n_batches:.4f}",
+                "avg_loss": f"{epoch_loss_sum / n_samples:.4f}",
+                "opt_step": optimizer_steps,
             }, refresh=False)
 
-    return epoch_loss / max(n_batches, 1)
+    return epoch_loss_sum / max(n_samples, 1)
 
 
 def validate(model, val_loader, val_noise_loader, cfg, loss_fn, device):
     """Run validation loop, return average loss."""
     model.eval()
-    total_loss = 0.0
+    total_loss_sum = 0.0
     n_batches = 0
+    n_samples = 0
     pbar = make_pbar(
         limit_batches(val_loader, cfg["max_val_batches"]),
         total=limited_len(val_loader, cfg["max_val_batches"]),
@@ -171,14 +192,16 @@ def validate(model, val_loader, val_noise_loader, cfg, loss_fn, device):
                 device,
                 deterministic=cfg["val_deterministic"],
             )
+            batch_size = ac_clean.size(0)
             ac_noisy, bc, ac_clean = to_model_inputs(ac_noisy, bc, ac_clean)
 
             pred = model(ac_noisy, bc)
             loss = loss_fn(pred, ac_clean, lengths)
-            total_loss += loss.cpu().item()
+            total_loss_sum += loss.cpu().item() * batch_size
             n_batches += 1
+            n_samples += batch_size
 
-    return total_loss / max(n_batches, 1)
+    return total_loss_sum / max(n_samples, 1)
 
 
 def train(config=None):
@@ -192,6 +215,8 @@ def train(config=None):
         )
     if not 2 <= cfg["audio_length_sec"] <= 8:
         raise ValueError("audio_length_sec must be in the [2, 8] second range")
+    if cfg["gradient_accum_steps"] < 1:
+        raise ValueError("gradient_accum_steps must be >= 1")
 
     device = get_device(cfg["device"])
     print(f"Device: {device}")

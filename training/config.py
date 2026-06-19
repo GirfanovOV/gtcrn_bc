@@ -9,6 +9,7 @@ DEFAULT_CONFIG = dict(
     # Training
     batch_size=64,
     val_batch_size=None,
+    gradient_accum_steps=1,
     lr=1e-3,
     epochs=100,
     grad_clip=5.0,
@@ -23,6 +24,8 @@ DEFAULT_CONFIG = dict(
     audio_length_sec=8,
     cache_audio_in_memory=False,
     share_cached_audio=False,
+    train_shuffle=True,
+    noise_shuffle=True,
     num_workers=4,                 # 0 for Mac, 2-4 for Colab
 
     snr_min=-5,

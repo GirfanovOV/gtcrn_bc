@@ -1,6 +1,6 @@
 import torch
 from functools import partial
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Subset
 from torch.nn.utils.rnn import pad_sequence
 from datasets import load_dataset, Audio
 import torchaudio.functional as F
@@ -159,8 +159,12 @@ def create_dataloader(
         random_crop=None,
         cache_in_memory=False,
         share_memory=False,
+        shuffle=False,
+        max_samples=None,
 ):
     dataset = VibravoxLocal(repo, split)
+    if max_samples is not None:
+        dataset = Subset(dataset, range(min(max_samples, len(dataset))))
     if cache_in_memory:
         dataset = InMemoryDataset(dataset, share_memory=share_memory, name=f"{repo}/{split}")
     if random_crop is None:
@@ -173,6 +177,7 @@ def create_dataloader(
     loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
+        shuffle=shuffle,
         num_workers=num_workers,
         pin_memory=pin_memory,
         collate_fn=collate_fn
@@ -185,6 +190,7 @@ def create_dataloader_noise(
         pin_memory=False,
         cache_in_memory=False,
         share_memory=False,
+        shuffle=False,
 ):
     dataset = DemandNoiseSubset()
     if cache_in_memory:
@@ -192,6 +198,7 @@ def create_dataloader_noise(
     loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
+        shuffle=shuffle,
         num_workers=num_workers,
         pin_memory=pin_memory,   # pinning mainly helps CUDA; can ignore on Mac
     )
