@@ -219,6 +219,8 @@ def train(config=None):
         raise ValueError("gradient_accum_steps must be >= 1")
     if not 0.0 <= cfg["noise_aware_coeff"] <= 1.0:
         raise ValueError("noise_aware_coeff must be in the [0, 1] range")
+    if cfg["wavlm_loss_weight"] < 0:
+        raise ValueError("wavlm_loss_weight must be >= 0")
 
     device = get_device(cfg["device"])
     print(f"Device: {device}")
@@ -232,7 +234,13 @@ def train(config=None):
     train_loader, val_loader, train_noise_iter, val_noise_loader = prepare_data(cfg)
     print(f"Train batches: {len(train_loader)} | Val batches: {len(val_loader)}")
 
-    loss_fn = HybridLoss(sisnr_weight=cfg["sisnr_weight"]).to(device)
+    loss_fn = HybridLoss(
+        sisnr_weight=cfg["sisnr_weight"],
+        use_wavlm_loss=cfg["use_wavlm_loss"],
+        wavlm_loss_weight=cfg["wavlm_loss_weight"],
+        wavlm_bundle=cfg["wavlm_bundle"],
+        wavlm_layer=cfg["wavlm_layer"],
+    ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg["lr"])
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=5

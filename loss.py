@@ -3,6 +3,68 @@ import torch.nn as nn
 from util import _istft
 
 
+class WavLMFeatureLoss(nn.Module):
+    def __init__(self, bundle_name="WAVLM_BASE", layer=-1):
+        super().__init__()
+        try:
+            import torchaudio
+        except ImportError as exc:
+            raise ImportError(
+                "torchaudio is required for WavLM feature loss. "
+                "Install torchaudio or disable use_wavlm_loss."
+            ) from exc
+
+        try:
+            bundle = getattr(torchaudio.pipelines, bundle_name)
+        except AttributeError as exc:
+            raise ValueError(f"Unknown torchaudio WavLM bundle: {bundle_name}") from exc
+
+        sample_rate = getattr(bundle, "sample_rate", None)
+        if sample_rate is not None and sample_rate != 16000:
+            raise ValueError(f"{bundle_name} expects {sample_rate} Hz audio, but training audio is 16000 Hz")
+
+        self.encoder = bundle.get_model()
+        self.encoder.eval()
+        for param in self.encoder.parameters():
+            param.requires_grad_(False)
+        self.layer = layer
+
+    def train(self, mode=True):
+        super().train(mode)
+        self.encoder.eval()
+        return self
+
+    def _select_layer(self, features):
+        if not features:
+            raise RuntimeError("WavLM returned no hidden states")
+        return features[self.layer]
+
+    @staticmethod
+    def _masked_l1(pred, target, lengths):
+        if lengths is None:
+            return torch.nn.functional.l1_loss(pred, target)
+
+        n_frames = pred.size(1)
+        frame_ids = torch.arange(n_frames, device=pred.device).unsqueeze(0)
+        mask = frame_ids < lengths.unsqueeze(1)
+        mask = mask.to(dtype=pred.dtype).unsqueeze(-1)
+        denom = mask.sum().clamp_min(1.0) * pred.size(-1)
+        return (pred - target).abs().mul(mask).sum() / denom
+
+    def forward(self, y_pred, y_true, lengths=None):
+        feature_lengths = lengths.to(device=y_pred.device) if lengths is not None else None
+        pred_features, pred_lengths = self.encoder.extract_features(y_pred, lengths=feature_lengths)
+        with torch.no_grad():
+            true_features, true_lengths = self.encoder.extract_features(y_true, lengths=feature_lengths)
+
+        pred_layer = self._select_layer(pred_features)
+        true_layer = self._select_layer(true_features).detach()
+        layer_lengths = pred_lengths if pred_lengths is not None else true_lengths
+        if layer_lengths is not None:
+            layer_lengths = layer_lengths.to(device=pred_layer.device)
+        return self._masked_l1(pred_layer, true_layer, layer_lengths)
+
+
 class HybridLoss(nn.Module):
     def __init__(
             self,
@@ -11,7 +73,11 @@ class HybridLoss(nn.Module):
             real_weight=30.0,
             imag_weight=30.0,
             mag_weight=70.0,
-            sisnr_weight=1.0
+            sisnr_weight=1.0,
+            use_wavlm_loss=False,
+            wavlm_loss_weight=0.0,
+            wavlm_bundle="WAVLM_BASE",
+            wavlm_layer=-1
         ):
         super().__init__()
         self.n_fft = n_fft
@@ -20,6 +86,11 @@ class HybridLoss(nn.Module):
         self.imag_weight = imag_weight
         self.mag_weight = mag_weight
         self.sisnr_weight = sisnr_weight
+        self.use_wavlm_loss = use_wavlm_loss
+        self.wavlm_loss_weight = wavlm_loss_weight
+        self.wavlm_loss = None
+        if use_wavlm_loss:
+            self.wavlm_loss = WavLMFeatureLoss(bundle_name=wavlm_bundle, layer=wavlm_layer)
 
     def _stft_mask(self, lengths, n_frames, device):
         frame_centers = torch.arange(n_frames, device=device) * self.hop_length
@@ -99,7 +170,13 @@ class HybridLoss(nn.Module):
         weighted_mag = self.mag_weight * mag_loss
         weighted_spectral = weighted_real + weighted_imag + weighted_mag
         weighted_sisnr = self.sisnr_weight * sisnr
+        wavlm = None
+        weighted_wavlm = None
         total = weighted_spectral + weighted_sisnr
+        if self.wavlm_loss is not None and self.wavlm_loss_weight > 0:
+            wavlm = self.wavlm_loss(y_pred, y_true, lengths)
+            weighted_wavlm = self.wavlm_loss_weight * wavlm
+            total = total + weighted_wavlm
 
         if not return_components and not return_grad_components:
             return total
@@ -115,6 +192,9 @@ class HybridLoss(nn.Module):
             "weighted_mag": weighted_mag.detach(),
             "weighted_sisnr": weighted_sisnr.detach(),
         }
+        if wavlm is not None:
+            components["wavlm"] = wavlm.detach()
+            components["weighted_wavlm"] = weighted_wavlm.detach()
 
         if not return_grad_components:
             return total, components
@@ -127,6 +207,8 @@ class HybridLoss(nn.Module):
             "weighted_spectral": weighted_spectral,
             "weighted_sisnr": weighted_sisnr,
         }
+        if weighted_wavlm is not None:
+            grad_components["weighted_wavlm"] = weighted_wavlm
         return total, components, grad_components
 
 

@@ -16,6 +16,10 @@ DEFAULT_CONFIG = dict(
     max_train_batches=None,
     max_val_batches=None,
     sisnr_weight=1.0,
+    use_wavlm_loss=False,
+    wavlm_loss_weight=0.0,
+    wavlm_bundle="WAVLM_BASE",
+    wavlm_layer=-1,
 
     # Data limits (set to None for full dataset)
     dataset_repo=DEFAULT_DATASET_REPO,

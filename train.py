@@ -86,6 +86,16 @@ def parse_args():
     parser.add_argument("--max_train_batches", type=int, default=None)
     parser.add_argument("--max_val_batches", type=int, default=None)
     parser.add_argument("--sisnr_weight", "--sisnr-weight", type=float, default=None)
+    parser.add_argument(
+        "--use_wavlm_loss",
+        "--use-wavlm-loss",
+        dest="use_wavlm_loss",
+        action="store_true",
+        default=None,
+    )
+    parser.add_argument("--wavlm_loss_weight", "--wavlm-loss-weight", type=float, default=None)
+    parser.add_argument("--wavlm_bundle", "--wavlm-bundle", type=str, default=None)
+    parser.add_argument("--wavlm_layer", "--wavlm-layer", type=int, default=None)
     parser.add_argument("--checkpoint_name", "--checkpoint-name", type=str, default=None)
     parser.add_argument("--grad_log_path", "--grad-log-path", type=str, default=None)
     parser.add_argument("--grad_log_interval", "--grad-log-interval", type=int, default=None)
