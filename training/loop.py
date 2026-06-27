@@ -129,15 +129,15 @@ def train_epoch(
             and grad_log_interval > 0
             and batch_idx % grad_log_interval == 0
         )
-        ac_noisy, bc, ac_clean, lengths = make_noisy_batch(batch, noise_iter, cfg, device)
-        batch_size = ac_clean.size(0)
-        ac_noisy, bc, ac_clean = to_model_inputs(ac_noisy, bc, ac_clean)
+        ac_noisy, bc, ac_target, lengths = make_noisy_batch(batch, noise_iter, cfg, device)
+        batch_size = ac_target.size(0)
+        ac_noisy, bc, ac_target = to_model_inputs(ac_noisy, bc, ac_target)
 
         pred = model(ac_noisy, bc)
         if should_log_grad:
             loss, _, grad_components = loss_fn(
                 pred,
-                ac_clean,
+                ac_target,
                 lengths,
                 return_components=True,
                 return_grad_components=True,
@@ -147,7 +147,7 @@ def train_epoch(
             global_step = (epoch - 1) * total_batches + batch_idx if total_batches else batch_idx
             append_grad_log(grad_log_path, epoch, batch_idx, global_step, lr_now, grad_norms)
         else:
-            loss = loss_fn(pred, ac_clean, lengths)
+            loss = loss_fn(pred, ac_target, lengths)
         (loss / accum_window).backward()
 
         epoch_loss_sum += loss.item() * batch_size
@@ -185,18 +185,18 @@ def validate(model, val_loader, val_noise_loader, cfg, loss_fn, device):
 
     with torch.inference_mode():
         for batch in pbar:
-            ac_noisy, bc, ac_clean, lengths = make_noisy_batch(
+            ac_noisy, bc, ac_target, lengths = make_noisy_batch(
                 batch,
                 noise_iter,
                 cfg,
                 device,
                 deterministic=cfg["val_deterministic"],
             )
-            batch_size = ac_clean.size(0)
-            ac_noisy, bc, ac_clean = to_model_inputs(ac_noisy, bc, ac_clean)
+            batch_size = ac_target.size(0)
+            ac_noisy, bc, ac_target = to_model_inputs(ac_noisy, bc, ac_target)
 
             pred = model(ac_noisy, bc)
-            loss = loss_fn(pred, ac_clean, lengths)
+            loss = loss_fn(pred, ac_target, lengths)
             total_loss_sum += loss.cpu().item() * batch_size
             n_batches += 1
             n_samples += batch_size
@@ -217,6 +217,8 @@ def train(config=None):
         raise ValueError("audio_length_sec must be in the [2, 8] second range")
     if cfg["gradient_accum_steps"] < 1:
         raise ValueError("gradient_accum_steps must be >= 1")
+    if not 0.0 <= cfg["noise_aware_coeff"] <= 1.0:
+        raise ValueError("noise_aware_coeff must be in the [0, 1] range")
 
     device = get_device(cfg["device"])
     print(f"Device: {device}")

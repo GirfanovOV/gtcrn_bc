@@ -31,12 +31,14 @@ def make_noisy_batch(batch, noise_iter, cfg, device, deterministic=False):
     scale = torch.sqrt(sig_pow / (snr_lin * noi_pow + 1e-8))
 
     ac_noisy = (ac_clean + noise * scale) * valid_f
-    return ac_noisy, bc, ac_clean, lengths
+    noise_aware_coeff = cfg["noise_aware_coeff"]
+    ac_target = noise_aware_coeff * ac_clean + (1.0 - noise_aware_coeff) * ac_noisy
+    return ac_noisy, bc, ac_target, lengths
 
 
-def to_model_inputs(ac_noisy, bc, ac_clean=None):
+def to_model_inputs(ac_noisy, bc, ac_target=None):
     ac_noisy = torch.view_as_real(_stft(ac_noisy))
     bc = torch.view_as_real(_stft(bc))
-    if ac_clean is None:
+    if ac_target is None:
         return ac_noisy, bc
-    return ac_noisy, bc, torch.view_as_real(_stft(ac_clean))
+    return ac_noisy, bc, torch.view_as_real(_stft(ac_target))

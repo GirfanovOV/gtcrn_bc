@@ -30,6 +30,7 @@ DEFAULT_CONFIG = dict(
 
     snr_min=-5,
     snr_max=15,
+    noise_aware_coeff=1.0,
     val_deterministic=True,
     val_snr_db=None,
 

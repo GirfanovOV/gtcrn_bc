@@ -50,6 +50,7 @@ def parse_args():
     )
     parser.add_argument("--snr_min", type=int, default=None)
     parser.add_argument("--snr_max", type=int, default=None)
+    parser.add_argument("--noise_aware_coeff", "--noise-aware-coeff", type=float, default=None)
     parser.add_argument("--val_snr_db", type=float, default=None)
     parser.add_argument(
         "--random-val",
