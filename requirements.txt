@@ -5,3 +5,7 @@ numpy
 tqdm
 datasets
 einops
+pesq
+pystoi
+torchmetrics
+onnxruntime
